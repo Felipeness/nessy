@@ -36,6 +36,16 @@ type rawEvent struct {
 type rawMessage struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+	Model   string          `json:"model,omitempty"`
+	Usage   *rawUsage       `json:"usage,omitempty"`
+}
+
+// rawUsage matches the shape of message.usage emitted by Claude Code.
+type rawUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 }
 
 // DecodeProjectDir undoes Claude's path encoding (`/` → `-`) on the project
@@ -111,6 +121,15 @@ func ParseSession(path string) (*Session, error) {
 			s.AssistantMessages++
 			s.MessageCount++
 			if ev.Message != nil {
+				if ev.Message.Model != "" && s.Model == "" {
+					s.Model = ev.Message.Model
+				}
+				if ev.Message.Usage != nil {
+					s.InputTokens += ev.Message.Usage.InputTokens
+					s.OutputTokens += ev.Message.Usage.OutputTokens
+					s.CacheCreationTokens += ev.Message.Usage.CacheCreationInputTokens
+					s.CacheReadTokens += ev.Message.Usage.CacheReadInputTokens
+				}
 				countToolUses(ev.Message.Content, s.ToolCalls)
 			}
 		}
