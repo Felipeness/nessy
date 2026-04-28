@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
 )
 
@@ -107,7 +108,7 @@ func cmdShow(args []string) {
 			dur := s.EndTime.Sub(s.StartTime)
 			fmt.Printf("Duração:    %s\n", dur.Round(1e9))
 			fmt.Printf("Msgs:       %d total (user: %d, assistant: %d)\n",
-				s.MessageCount, s.UserMessages, s.AssistantMsgs)
+				s.MessageCount, s.UserMessages, s.AssistantMessages)
 			if len(s.ToolCalls) > 0 {
 				fmt.Printf("\nTools usados:\n")
 				type kv struct{ k string; v int }
@@ -238,7 +239,7 @@ func resume(dir, sessionID string) {
 	}
 }
 
-func loadSorted() ([]*parser.Session, error) {
+func loadSorted() ([]*model.Session, error) {
 	sessions, err := parser.ListSessions()
 	if err != nil {
 		return nil, err
@@ -249,7 +250,7 @@ func loadSorted() ([]*parser.Session, error) {
 	return sessions, nil
 }
 
-func printTable(sessions []*parser.Session) {
+func printTable(sessions []*model.Session) {
 	if len(sessions) == 0 {
 		fmt.Println("Nenhuma session em ~/.claude/projects/")
 		return

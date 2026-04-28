@@ -15,24 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/felipeness/claude-history/internal/model"
 )
 
-// Session is the indexed view of one Claude Code conversation.
-type Session struct {
-	SessionID    string         `json:"session_id"`
-	ProjectDir   string         `json:"project_dir"` // decoded original cwd
-	JSONLPath    string         `json:"jsonl_path"`
-	StartTime    time.Time      `json:"start_time"`
-	EndTime      time.Time      `json:"end_time"`
-	MessageCount int            `json:"message_count"`
-	UserMessages int             `json:"user_messages"`
-	AssistantMsgs int           `json:"assistant_msgs"`
-	FirstUserMsg string         `json:"first_user_msg"`
-	LastUserMsg  string         `json:"last_user_msg"`
-	GitBranch    string         `json:"git_branch"`
-	ClaudeVersion string        `json:"claude_version"`
-	ToolCalls    map[string]int `json:"tool_calls"`
-}
+// Session is an alias for model.Session, kept for backwards-compat with callers.
+type Session = model.Session
 
 // rawEvent captures only the fields we need from any line of the JSONL.
 type rawEvent struct {
@@ -120,7 +108,7 @@ func ParseSession(path string) (*Session, error) {
 				}
 			}
 		case "assistant":
-			s.AssistantMsgs++
+			s.AssistantMessages++
 			s.MessageCount++
 			if ev.Message != nil {
 				countToolUses(ev.Message.Content, s.ToolCalls)
