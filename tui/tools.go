@@ -36,7 +36,12 @@ func newToolsView(sessions []*model.Session) toolsView {
 	for t, c := range calls {
 		out = append(out, toolStat{Name: t, TotalCalls: c, NumSessions: len(sess[t])})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TotalCalls > out[j].TotalCalls })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TotalCalls != out[j].TotalCalls {
+			return out[i].TotalCalls > out[j].TotalCalls
+		}
+		return out[i].Name < out[j].Name
+	})
 	return toolsView{sessions: sessions, stats: out}
 }
 

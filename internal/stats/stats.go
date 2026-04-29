@@ -235,7 +235,10 @@ func LongTailByCost(sessions []*model.Session, p *pricing.Pricing, n int) []*mod
 	sort.Slice(sessions, func(i, j int) bool {
 		ci, _ := p.Cost(sessions[i])
 		cj, _ := p.Cost(sessions[j])
-		return ci.USD > cj.USD
+		if ci.USD != cj.USD {
+			return ci.USD > cj.USD
+		}
+		return sessions[i].SessionID < sessions[j].SessionID
 	})
 	if len(sessions) > n {
 		return sessions[:n]
@@ -246,7 +249,13 @@ func LongTailByCost(sessions []*model.Session, p *pricing.Pricing, n int) []*mod
 func LongTailByDuration(sessions []*model.Session, n int) []*model.Session {
 	out := make([]*model.Session, len(sessions))
 	copy(out, sessions)
-	sort.Slice(out, func(i, j int) bool { return out[i].Duration() > out[j].Duration() })
+	sort.Slice(out, func(i, j int) bool {
+		di, dj := out[i].Duration(), out[j].Duration()
+		if di != dj {
+			return di > dj
+		}
+		return out[i].SessionID < out[j].SessionID
+	})
 	if len(out) > n {
 		return out[:n]
 	}

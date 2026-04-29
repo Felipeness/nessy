@@ -107,7 +107,12 @@ func (d *detailContext) renderDetail(s *model.Session) string {
 				max = v
 			}
 		}
-		sort.Slice(pairs, func(i, j int) bool { return pairs[i].v > pairs[j].v })
+		sort.Slice(pairs, func(i, j int) bool {
+			if pairs[i].v != pairs[j].v {
+				return pairs[i].v > pairs[j].v
+			}
+			return pairs[i].k < pairs[j].k
+		})
 		shown := pairs
 		if len(shown) > 8 {
 			shown = shown[:8]

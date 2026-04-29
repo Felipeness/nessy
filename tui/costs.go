@@ -79,7 +79,12 @@ func (v costsView) View(width int) string {
 	for k, c := range costByProj {
 		pairs = append(pairs, kv{k, c})
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].v > pairs[j].v })
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].v != pairs[j].v {
+			return pairs[i].v > pairs[j].v
+		}
+		return pairs[i].k < pairs[j].k
+	})
 	maxProj := 0.01
 	if len(pairs) > 0 {
 		maxProj = pairs[0].v
@@ -113,7 +118,12 @@ func (v costsView) View(width int) string {
 			maxModel = c
 		}
 	}
-	sort.Slice(mPairs, func(i, j int) bool { return mPairs[i].v > mPairs[j].v })
+	sort.Slice(mPairs, func(i, j int) bool {
+		if mPairs[i].v != mPairs[j].v {
+			return mPairs[i].v > mPairs[j].v
+		}
+		return mPairs[i].k < mPairs[j].k
+	})
 	for _, p := range mPairs {
 		bar := BarChart("", p.v, maxModel, 25, ModelColor(p.k))
 		fmt.Fprintf(&b, "  %s $%-7.2f  %s %s\n", bar, p.v, ModelBadge(p.k), modelShort(p.k))

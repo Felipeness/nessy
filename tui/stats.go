@@ -99,7 +99,12 @@ func (v statsView) renderGlobal(width int) string {
 		modelPairs = append(modelPairs, kv{k, c})
 		totalModelMsgs += c
 	}
-	sort.Slice(modelPairs, func(i, j int) bool { return modelPairs[i].v > modelPairs[j].v })
+	sort.Slice(modelPairs, func(i, j int) bool {
+		if modelPairs[i].v != modelPairs[j].v {
+			return modelPairs[i].v > modelPairs[j].v
+		}
+		return modelPairs[i].k < modelPairs[j].k
+	})
 	for _, p := range modelPairs {
 		bar := BarChart(fmt.Sprintf("%-20s", modelShort(p.k)), float64(p.v), float64(totalModelMsgs), 18, ModelColor(p.k))
 		fmt.Fprintf(&b, "%s %d\n", bar, p.v)
@@ -137,7 +142,12 @@ func (v statsView) renderGlobal(width int) string {
 			v float64
 		}{k, c})
 	}
-	sort.Slice(projPairs, func(i, j int) bool { return projPairs[i].v > projPairs[j].v })
+	sort.Slice(projPairs, func(i, j int) bool {
+		if projPairs[i].v != projPairs[j].v {
+			return projPairs[i].v > projPairs[j].v
+		}
+		return projPairs[i].k < projPairs[j].k
+	})
 	for i, p := range projPairs {
 		if i >= 5 {
 			break
@@ -207,7 +217,12 @@ func (v statsView) renderGlobal(width int) string {
 	for k, c := range toolGlobal {
 		toolPairs = append(toolPairs, kv{k, c})
 	}
-	sort.Slice(toolPairs, func(i, j int) bool { return toolPairs[i].v > toolPairs[j].v })
+	sort.Slice(toolPairs, func(i, j int) bool {
+		if toolPairs[i].v != toolPairs[j].v {
+			return toolPairs[i].v > toolPairs[j].v
+		}
+		return toolPairs[i].k < toolPairs[j].k
+	})
 	maxTool := 1
 	for _, p := range toolPairs {
 		if p.v > maxTool {

@@ -65,7 +65,12 @@ func TopWords(sessions []*model.Session, n int) []WordCount {
 	for w, c := range freq {
 		pairs = append(pairs, WordCount{w, c})
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Count > pairs[j].Count })
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Count != pairs[j].Count {
+			return pairs[i].Count > pairs[j].Count
+		}
+		return pairs[i].Word < pairs[j].Word
+	})
 	if len(pairs) > n {
 		pairs = pairs[:n]
 	}
@@ -127,7 +132,12 @@ func TopPrefixes(sessions []*model.Session, n int) []WordCount {
 	for w, c := range freq {
 		pairs = append(pairs, WordCount{w, c})
 	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Count > pairs[j].Count })
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Count != pairs[j].Count {
+			return pairs[i].Count > pairs[j].Count
+		}
+		return pairs[i].Word < pairs[j].Word
+	})
 	if len(pairs) > n {
 		pairs = pairs[:n]
 	}
