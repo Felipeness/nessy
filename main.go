@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,8 +10,13 @@ import (
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/claude-history/tui"
 )
 
 const usage = `claude-history — busca todas as suas conversas do Claude Code
@@ -19,13 +25,14 @@ USAGE:
   claude-history list [--json|--tsv]   lista todas as sessions (default: tabela)
   claude-history fzf                    abre fzf interativo, Enter retoma a session
   claude-history show <session-id>      mostra detalhes de uma session
-  claude-history serve [--port N]       sobe API HTTP + web UI (próxima fase)
-  claude-history tui                    TUI Bubble Tea (próxima fase)
+  claude-history tui                    TUI Bubble Tea com tabs Search/Recent/Stats
+  claude-history serve [--port N]       sobe API HTTP + web UI (Fase 3)
 
 EXAMPLES:
   claude-history list
   claude-history list --json | jq '.[] | select(.git_branch == "main")'
   claude-history fzf
+  claude-history tui
 `
 
 func main() {
@@ -40,6 +47,8 @@ func main() {
 		cmdFzf()
 	case "show":
 		cmdShow(os.Args[2:])
+	case "tui":
+		cmdTui(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -236,6 +245,67 @@ func resume(dir, sessionID string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Exit(1)
+	}
+}
+
+const defaultPricingTOML = `default_currency = "USD"
+brl_rate = 5.20
+
+[[models]]
+name = "claude-sonnet-4-6"
+input_per_mtok = 3.00
+output_per_mtok = 15.00
+cache_creation_per_mtok = 3.75
+cache_read_per_mtok = 0.30
+
+[[models]]
+name = "claude-opus-4-7"
+input_per_mtok = 15.00
+output_per_mtok = 75.00
+cache_creation_per_mtok = 18.75
+cache_read_per_mtok = 1.50
+
+[[models]]
+name = "claude-haiku-4-5"
+input_per_mtok = 1.00
+output_per_mtok = 5.00
+cache_creation_per_mtok = 1.25
+cache_read_per_mtok = 0.10
+`
+
+func cmdTui(_ []string) {
+	home, _ := os.UserHomeDir()
+	cacheDir := filepath.Join(home, ".claude-history")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		fatal(err)
+	}
+	dbPath := filepath.Join(cacheDir, "index.db")
+	pricingPath := filepath.Join(cacheDir, "pricing.toml")
+
+	if _, err := os.Stat(pricingPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(pricingPath, []byte(defaultPricingTOML), 0644); err != nil {
+			fatal(err)
+		}
+	}
+
+	db, err := index.Open(dbPath)
+	if err != nil {
+		fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Reindex(filepath.Join(home, ".claude", "projects")); err != nil {
+		fmt.Fprintln(os.Stderr, "reindex error:", err)
+	}
+
+	p, err := pricing.Load(pricingPath)
+	if err != nil {
+		fatal(err)
+	}
+
+	prog := tea.NewProgram(tui.New(db, p), tea.WithAltScreen())
+	if _, err := prog.Run(); err != nil {
+		fatal(err)
 	}
 }
 
