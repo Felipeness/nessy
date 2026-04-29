@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+@source "./**/*.{ts,tsx,js,jsx,html}";
+@source "../index.html";
+
 @theme {
   --color-bg: #0d1117;
   --color-fg: #c9d1d9;
@@ -8,9 +11,6 @@
   --color-success: #3fb950;
   --color-warn: #d29922;
   --color-danger: #f85149;
-  --color-sonnet: #58a6ff;
-  --color-opus: #bc8cff;
-  --color-haiku: #3fb950;
   --color-card: #161b22;
   --color-border: #30363d;
 }

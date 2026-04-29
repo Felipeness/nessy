@@ -13,7 +13,6 @@ import {
 import { api } from '../api'
 import type { Behavioral, Stats } from '../types'
 import { Heatmap } from '../components/Heatmap'
-import { ModelBadge } from '../components/ModelBadge'
 
 type Props = { reindexCounter: number }
 
@@ -198,7 +197,6 @@ export function StatsTab({ reindexCounter }: Props) {
               <th className="text-right">Msgs</th>
               <th className="text-right">Duração</th>
               <th className="text-right">Custo</th>
-              <th className="text-right">Modelo</th>
             </tr>
           </thead>
           <tbody>
@@ -209,12 +207,6 @@ export function StatsTab({ reindexCounter }: Props) {
                 <td className="text-right">{s.message_count}</td>
                 <td className="text-right">{formatNs(s.duration_ns)}</td>
                 <td className="text-right">${s.cost_usd.toFixed(2)}</td>
-                <td className="text-right">
-                  {/* badge inline na tabela */}
-                  <span className="inline-block">
-                    <ModelBadge model={"" /* placeholder, table não traz model */} size="sm" />
-                  </span>
-                </td>
               </tr>
             ))}
           </tbody>
