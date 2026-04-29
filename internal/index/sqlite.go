@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS last_index_meta (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_cache (
+	session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+	jsonl_mtime INTEGER NOT NULL,
+	summary TEXT,
+	embedding BLOB,
+	topic_cluster INTEGER NOT NULL DEFAULT -1,
+	topic_label TEXT,
+	generated_at INTEGER NOT NULL
+);
 `
 
 const currentSchemaVersion = "1"
@@ -236,6 +246,74 @@ func (db *DB) loadToolCalls(s *model.Session) error {
 		s.ToolCalls[name] = count
 	}
 	return rows.Err()
+}
+
+// AICache representa o cache de geração AI de uma session.
+type AICache struct {
+	SessionID    string
+	JSONLMtime   int64
+	Summary      string
+	Embedding    []byte
+	TopicCluster int
+	TopicLabel   string
+	GeneratedAt  int64
+}
+
+// AICacheGet busca o cache pra uma session.
+func (db *DB) AICacheGet(sessionID string) (*AICache, error) {
+	row := db.conn.QueryRow(`SELECT session_id, jsonl_mtime, summary, embedding, topic_cluster, topic_label, generated_at FROM ai_cache WHERE session_id = ?`, sessionID)
+	var c AICache
+	var label, summary sql.NullString
+	if err := row.Scan(&c.SessionID, &c.JSONLMtime, &summary, &c.Embedding, &c.TopicCluster, &label, &c.GeneratedAt); err != nil {
+		return nil, err
+	}
+	c.Summary = summary.String
+	c.TopicLabel = label.String
+	return &c, nil
+}
+
+// AICacheUpsert grava ou atualiza o cache.
+func (db *DB) AICacheUpsert(c *AICache) error {
+	const q = `
+INSERT INTO ai_cache (session_id, jsonl_mtime, summary, embedding, topic_cluster, topic_label, generated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(session_id) DO UPDATE SET
+	jsonl_mtime=excluded.jsonl_mtime,
+	summary=COALESCE(NULLIF(excluded.summary,''), ai_cache.summary),
+	embedding=COALESCE(excluded.embedding, ai_cache.embedding),
+	topic_cluster=excluded.topic_cluster,
+	topic_label=COALESCE(NULLIF(excluded.topic_label,''), ai_cache.topic_label),
+	generated_at=excluded.generated_at
+`
+	_, err := db.conn.Exec(q, c.SessionID, c.JSONLMtime, c.Summary, c.Embedding, c.TopicCluster, c.TopicLabel, c.GeneratedAt)
+	return err
+}
+
+// AICacheList retorna todos os caches existentes.
+func (db *DB) AICacheList() ([]*AICache, error) {
+	rows, err := db.conn.Query(`SELECT session_id, jsonl_mtime, summary, embedding, topic_cluster, topic_label, generated_at FROM ai_cache`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*AICache
+	for rows.Next() {
+		var c AICache
+		var label, summary sql.NullString
+		if err := rows.Scan(&c.SessionID, &c.JSONLMtime, &summary, &c.Embedding, &c.TopicCluster, &label, &c.GeneratedAt); err != nil {
+			return nil, err
+		}
+		c.Summary = summary.String
+		c.TopicLabel = label.String
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
+// AICacheUpdateCluster grava cluster + label num batch eficiente.
+func (db *DB) AICacheUpdateCluster(sessionID string, cluster int, label string) error {
+	_, err := db.conn.Exec(`UPDATE ai_cache SET topic_cluster = ?, topic_label = ? WHERE session_id = ?`, cluster, label, sessionID)
+	return err
 }
 
 // SearchResult é um match retornado por SearchFTS ou SearchLike.

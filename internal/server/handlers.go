@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felipeness/claude-history/internal/ai"
+	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
 	"github.com/felipeness/claude-history/internal/pricing"
@@ -29,6 +32,14 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/refresh", s.handleRefresh)
 	mux.HandleFunc("/api/export/", s.handleExport) // /api/export/<id>
+	mux.HandleFunc("/api/ai/health", s.handleAIHealth)
+	mux.HandleFunc("/api/ai/summaries", s.handleAISummaries)
+	mux.HandleFunc("/api/ai/summary/", s.handleAISummary)
+	mux.HandleFunc("/api/ai/similar/", s.handleAISimilar)
+	mux.HandleFunc("/api/ai/clusters", s.handleAIClusters)
+	mux.HandleFunc("/api/ai/clusters/recompute", s.handleAIRecomputeClusters)
+	mux.HandleFunc("/api/ai/generate-all", s.handleAIGenerateAll)
+	mux.HandleFunc("/api/ai/generate/", s.handleAIGenerateOne)
 }
 
 // withSessions é um helper que carrega sessions e responde com JSON ou erro.
@@ -545,6 +556,216 @@ func metaMatch(sess *model.Session, q string) bool {
 	}
 	return false
 }
+
+// --- AI ---
+
+type aiHealthResp struct {
+	Enabled         bool   `json:"enabled"`
+	OllamaReachable bool   `json:"ollama_reachable"`
+	GenModel        string `json:"gen_model"`
+	EmbedModel      string `json:"embed_model"`
+	Cached          int    `json:"cached"`
+	Total           int    `json:"total"`
+	Queued          int    `json:"queued"`
+}
+
+func (s *Server) handleAIHealth(w http.ResponseWriter, r *http.Request) {
+	resp := aiHealthResp{Enabled: s.AIEnabled, GenModel: s.GenModel}
+	if s.AIClient != nil {
+		resp.OllamaReachable = s.AIClient.Health(r.Context())
+	}
+	if s.AIWorker != nil {
+		resp.EmbedModel = s.AIWorker.EmbedModel
+		resp.Queued = s.AIWorker.QueuedCount()
+	}
+	all, _ := s.DB.ListSessions()
+	resp.Total = len(all)
+	caches, _ := s.DB.AICacheList()
+	for _, c := range caches {
+		if c.Summary != "" {
+			resp.Cached++
+		}
+	}
+	writeJSON(w, 200, resp)
+}
+
+func (s *Server) requireAI(w http.ResponseWriter) bool {
+	if !s.AIEnabled || s.AIClient == nil {
+		writeErr(w, 503, "ai disabled")
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleAISummaries(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	caches, err := s.DB.AICacheList()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	type entry struct {
+		SessionID string `json:"session_id"`
+		Summary   string `json:"summary"`
+		Cluster   int    `json:"cluster"`
+		Label     string `json:"label"`
+	}
+	out := make([]entry, 0, len(caches))
+	for _, c := range caches {
+		out = append(out, entry{
+			SessionID: c.SessionID,
+			Summary:   c.Summary,
+			Cluster:   c.TopicCluster,
+			Label:     c.TopicLabel,
+		})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleAISummary(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/ai/summary/")
+	if id == "" {
+		writeErr(w, 400, "session id required")
+		return
+	}
+	cache, err := s.DB.AICacheGet(id)
+	if err == nil && cache.Summary != "" {
+		writeJSON(w, 200, map[string]any{
+			"session_id":   id,
+			"summary":      cache.Summary,
+			"generated_at": cache.GeneratedAt,
+			"cached":       true,
+		})
+		return
+	}
+	if s.AIWorker != nil {
+		s.AIWorker.Enqueue(id)
+	}
+	writeJSON(w, 202, map[string]any{"session_id": id, "status": "queued"})
+}
+
+func (s *Server) handleAISimilar(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/ai/similar/")
+	if id == "" {
+		writeErr(w, 400, "session id required")
+		return
+	}
+	n := 10
+	if v := r.URL.Query().Get("n"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 && i <= 50 {
+			n = i
+		}
+	}
+	results, err := ai.FindSimilar(s.DB, id, n)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, results)
+}
+
+func (s *Server) handleAIClusters(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	caches, err := s.DB.AICacheList()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	groups := map[int]*ai.ClusterInfo{}
+	for _, c := range caches {
+		if c.TopicCluster < 0 {
+			continue
+		}
+		ci, ok := groups[c.TopicCluster]
+		if !ok {
+			ci = &ai.ClusterInfo{ClusterID: c.TopicCluster, Label: c.TopicLabel}
+			groups[c.TopicCluster] = ci
+		}
+		ci.SessionIDs = append(ci.SessionIDs, c.SessionID)
+	}
+	out := make([]ai.ClusterInfo, 0, len(groups))
+	for _, ci := range groups {
+		out = append(out, *ci)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i].SessionIDs) != len(out[j].SessionIDs) {
+			return len(out[i].SessionIDs) > len(out[j].SessionIDs)
+		}
+		return out[i].ClusterID < out[j].ClusterID
+	})
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleAIRecomputeClusters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	go func() {
+		out, err := ai.RecomputeClusters(context.Background(), s.DB, s.AIClient, s.GenModel)
+		if err == nil {
+			s.Hub.Broadcast("clusters_done", map[string]any{"clusters": out})
+		}
+	}()
+	writeJSON(w, 202, map[string]string{"status": "running"})
+}
+
+func (s *Server) handleAIGenerateAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	all, err := s.DB.ListSessions()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	queued := 0
+	for _, sess := range all {
+		c, err := s.DB.AICacheGet(sess.SessionID)
+		if err == nil && c.Summary != "" && c.JSONLMtime == sess.JSONLMtime.UnixNano() {
+			continue
+		}
+		s.AIWorker.Enqueue(sess.SessionID)
+		queued++
+	}
+	writeJSON(w, 200, map[string]int{"queued": queued})
+}
+
+func (s *Server) handleAIGenerateOne(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/ai/generate/")
+	if id == "" {
+		writeErr(w, 400, "session id required")
+		return
+	}
+	s.AIWorker.Enqueue(id)
+	writeJSON(w, 202, map[string]string{"status": "queued", "session_id": id})
+}
+
+var _ = index.AICache{}
 
 // --- Refresh ---
 

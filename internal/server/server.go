@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/felipeness/claude-history/internal/ai"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/pricing"
 )
@@ -20,6 +21,11 @@ type Server struct {
 	Pricing *pricing.Pricing
 	Hub     *Hub
 	Static  http.Handler // serve frontend (go:embed); pode ser nil em dev
+
+	AIEnabled bool
+	AIClient  *ai.Client
+	AIWorker  *ai.Worker
+	GenModel  string
 }
 
 // Run inicializa o HTTP server, registra rotas e bloqueia até erro/sigterm.

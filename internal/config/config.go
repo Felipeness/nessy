@@ -15,8 +15,15 @@ type Config struct {
 		AlertPerDayUSD float64 `toml:"alert_per_day_usd"`
 	} `toml:"cost"`
 	UI struct {
-		DefaultTab string `toml:"default_tab"` // "Recent" / "Search" / "Stats" / "Costs" / "Timeline" / "Tools"
+		DefaultTab string `toml:"default_tab"`
 	} `toml:"ui"`
+	AI struct {
+		Enabled      bool   `toml:"enabled"`
+		OllamaURL    string `toml:"ollama_url"`
+		GenModel     string `toml:"gen_model"`
+		EmbedModel   string `toml:"embed_model"`
+		AutoGenerate bool   `toml:"auto_generate"`
+	} `toml:"ai"`
 }
 
 // State — estado dinâmico, persistido entre runs.
@@ -32,6 +39,11 @@ func DefaultConfig() *Config {
 	c.Cost.WarnPerDayUSD = 5.00
 	c.Cost.AlertPerDayUSD = 10.00
 	c.UI.DefaultTab = "Recent"
+	c.AI.Enabled = true
+	c.AI.OllamaURL = "http://localhost:11434"
+	c.AI.GenModel = "qwen2.5:7b"
+	c.AI.EmbedModel = "nomic-embed-text"
+	c.AI.AutoGenerate = true
 	return c
 }
 
@@ -52,6 +64,15 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.UI.DefaultTab == "" {
 		c.UI.DefaultTab = "Recent"
+	}
+	if c.AI.OllamaURL == "" {
+		c.AI.OllamaURL = "http://localhost:11434"
+	}
+	if c.AI.GenModel == "" {
+		c.AI.GenModel = "qwen2.5:7b"
+	}
+	if c.AI.EmbedModel == "" {
+		c.AI.EmbedModel = "nomic-embed-text"
 	}
 	return c, nil
 }

@@ -14,6 +14,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"context"
+
+	"github.com/felipeness/claude-history/internal/ai"
 	"github.com/felipeness/claude-history/internal/config"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
@@ -324,6 +327,8 @@ func cmdServe(args []string) {
 	port := 5555
 	listenFlag := ""
 	openBrowser := true
+	noAI := false
+	aiModelOverride := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--port", "-p":
@@ -341,6 +346,13 @@ func cmdServe(args []string) {
 			}
 		case "--no-open":
 			openBrowser = false
+		case "--no-ai":
+			noAI = true
+		case "--ai-model":
+			if i+1 < len(args) {
+				aiModelOverride = args[i+1]
+				i++
+			}
 		}
 	}
 	listen := listenFlag
@@ -383,12 +395,48 @@ func cmdServe(args []string) {
 		fatal(err)
 	}
 
+	cfg, _ := config.LoadConfig(filepath.Join(cacheDir, "config.toml"))
+	if noAI {
+		cfg.AI.Enabled = false
+	}
+	if aiModelOverride != "" {
+		cfg.AI.GenModel = aiModelOverride
+	}
+
+	hub := server.NewHub()
 	srv := &server.Server{
 		DB:      db,
 		Pricing: p,
-		Hub:     server.NewHub(),
+		Hub:     hub,
 		Static:  staticHandler(),
 	}
+
+	if cfg.AI.Enabled {
+		client := ai.NewClient(cfg.AI.OllamaURL)
+		worker := ai.NewWorker(db, client, cfg.AI.GenModel, cfg.AI.EmbedModel, hub)
+		srv.AIEnabled = true
+		srv.AIClient = client
+		srv.AIWorker = worker
+		srv.GenModel = cfg.AI.GenModel
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go worker.Run(ctx)
+
+		// kick off auto-generate em background se Ollama estiver up
+		if cfg.AI.AutoGenerate && client.Health(ctx) {
+			go func() {
+				all, _ := db.ListSessions()
+				for _, sess := range all {
+					c, err := db.AICacheGet(sess.SessionID)
+					if err == nil && c.Summary != "" && c.JSONLMtime == sess.JSONLMtime.UnixNano() {
+						continue
+					}
+					worker.Enqueue(sess.SessionID)
+				}
+			}()
+		}
+	}
+
 	if err := server.Run(srv, listen, openBrowser); err != nil {
 		fatal(err)
 	}
