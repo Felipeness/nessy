@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -25,30 +27,39 @@ const (
 
 var tabNames = []string{"Search", "Recent", "Stats"}
 
+const numTabs = 3
+
 const wideCols = 120
 
 // Model é o root da TUI.
 type Model struct {
-	db        *index.DB
-	pricing   *pricing.Pricing
-	width     int
-	height    int
-	activeTab tabID
-	status    string
-	showHelp  bool
-	recent    recentView
-	search    searchView
-	stats     statsView
+	db          *index.DB
+	pricing     *pricing.Pricing
+	width       int
+	height      int
+	activeTab   tabID
+	status      string
+	statusUntil time.Time // se != zero, status revert pra default depois disso
+	showHelp    bool
+	refreshing  bool
+	spin        spinner.Model
+	recent      recentView
+	search      searchView
+	stats       statsView
 }
 
 // New cria o root model carregando sessions do cache.
 func New(db *index.DB, p *pricing.Pricing) Model {
 	sessions, _ := db.ListSessions()
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
 	return Model{
 		db:        db,
 		pricing:   p,
 		activeTab: tabRecent,
 		status:    "ready",
+		spin:      sp,
 		recent:    newRecentView(sessions, p),
 		search:    newSearchView(db, p, sessions),
 		stats:     newStatsView(sessions, p),
@@ -56,7 +67,7 @@ func New(db *index.DB, p *pricing.Pricing) Model {
 }
 
 // Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return m.spin.Tick }
 
 func (m *Model) reload() {
 	sessions, _ := m.db.ListSessions()
@@ -73,6 +84,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case refreshDoneMsg:
+		m.refreshing = false
 		if msg.err != nil {
 			m.status = "refresh error: " + msg.err.Error()
 		} else {
@@ -80,6 +92,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.stats.New, msg.stats.Updated, msg.stats.Removed)
 			m.reload()
 		}
+		return m, nil
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+
+	case exportDoneMsg:
+		if msg.err != nil {
+			m.status = "export error: " + msg.err.Error()
+		} else {
+			m.status = "exported to " + msg.path
+		}
+		m.statusUntil = time.Now().Add(3 * time.Second)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -108,16 +134,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.Quit):
 			return m, tea.Quit
 		case keyMatches(k, keys.NextTab):
-			m.activeTab = (m.activeTab + 1) % 3
+			m.activeTab = (m.activeTab + 1) % numTabs
 			return m, nil
 		case keyMatches(k, keys.PrevTab):
-			m.activeTab = (m.activeTab + 2) % 3
+			m.activeTab = (m.activeTab + numTabs - 1) % numTabs
+			return m, nil
+		case keyMatches(k, keys.Tab1):
+			m.activeTab = tabSearch
+			return m, nil
+		case keyMatches(k, keys.Tab2):
+			m.activeTab = tabRecent
+			return m, nil
+		case keyMatches(k, keys.Tab3):
+			m.activeTab = tabStats
 			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
 			return m, nil
 		case keyMatches(k, keys.Down):
 			m.moveCursor(+1)
+			return m, nil
+		case keyMatches(k, keys.PageUp):
+			m.moveCursor(-10)
+			return m, nil
+		case keyMatches(k, keys.PageDn):
+			m.moveCursor(+10)
+			return m, nil
+		case keyMatches(k, keys.Top):
+			m.cursorTo(0)
+			return m, nil
+		case keyMatches(k, keys.Bottom):
+			m.cursorTo(99999)
 			return m, nil
 		case keyMatches(k, keys.Group):
 			if m.activeTab == tabRecent {
@@ -131,6 +178,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(k, keys.Refresh):
 			m.status = "refreshing…"
+			m.refreshing = true
 			return m, refreshCmd(m.db, claudeProjectsRoot())
 		case keyMatches(k, keys.Enter):
 			s := m.selectedForActiveTab()
@@ -144,6 +192,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = exec.Command("open", s.ProjectDir).Start()
 			}
 			return m, nil
+		case keyMatches(k, keys.Export):
+			s := m.selectedForActiveTab()
+			if s != nil {
+				return m, exportCmd(s, m.pricing)
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -155,6 +209,15 @@ func (m *Model) moveCursor(delta int) {
 		m.recent.cursor = clamp(m.recent.cursor+delta, 0, len(m.recent.sessions)-1)
 	case tabSearch:
 		m.search.cursor = clamp(m.search.cursor+delta, 0, len(m.search.results)-1)
+	}
+}
+
+func (m *Model) cursorTo(pos int) {
+	switch m.activeTab {
+	case tabRecent:
+		m.recent.cursor = clamp(pos, 0, len(m.recent.sessions)-1)
+	case tabSearch:
+		m.search.cursor = clamp(pos, 0, len(m.search.results)-1)
 	}
 }
 
@@ -250,7 +313,14 @@ func (m Model) renderNarrow(h int) string {
 }
 
 func (m Model) renderStatusBar() string {
-	return statusBarStyle.Width(m.width).Render(fmt.Sprintf(" %s ", m.status))
+	prefix := ""
+	if m.refreshing {
+		prefix = m.spin.View() + " "
+	}
+	if !m.statusUntil.IsZero() && time.Now().After(m.statusUntil) {
+		// status temporário expirou
+	}
+	return statusBarStyle.Width(m.width).Render(fmt.Sprintf(" %s%s ", prefix, m.status))
 }
 
 func helpText() string {
