@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/felipeness/claude-history/internal/config"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
@@ -281,6 +282,8 @@ func cmdTui(_ []string) {
 	}
 	dbPath := filepath.Join(cacheDir, "index.db")
 	pricingPath := filepath.Join(cacheDir, "pricing.toml")
+	configPath := filepath.Join(cacheDir, "config.toml")
+	statePath := filepath.Join(cacheDir, "state.toml")
 
 	if _, err := os.Stat(pricingPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(pricingPath, []byte(defaultPricingTOML), 0644); err != nil {
@@ -303,7 +306,10 @@ func cmdTui(_ []string) {
 		fatal(err)
 	}
 
-	prog := tea.NewProgram(tui.New(db, p), tea.WithAltScreen())
+	cfg, _ := config.LoadConfig(configPath)
+	state := config.LoadState(statePath)
+
+	prog := tea.NewProgram(tui.New(db, p, cfg, state, statePath), tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		fatal(err)
 	}

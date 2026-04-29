@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/felipeness/claude-history/internal/config"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/pricing"
@@ -38,6 +39,8 @@ const wideCols = 120
 type Model struct {
 	db          *index.DB
 	pricing     *pricing.Pricing
+	cfg         *config.Config
+	statePath   string
 	width       int
 	height      int
 	activeTab   tabID
@@ -55,25 +58,65 @@ type Model struct {
 	tools       toolsView
 }
 
-// New cria o root model carregando sessions do cache.
-func New(db *index.DB, p *pricing.Pricing) Model {
+// New cria o root model carregando sessions do cache + state persistido.
+func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.State, statePath string) Model {
 	sessions, _ := db.ListSessions()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
+
+	tab := tabFromName(state.LastTab)
+	if tab < 0 {
+		tab = tabFromName(cfg.UI.DefaultTab)
+		if tab < 0 {
+			tab = tabRecent
+		}
+	}
+
+	recent := newRecentView(sessions, p)
+	recent.groupByProject = state.RecentGroupByProject
+
+	search := newSearchView(db, p, sessions)
+	if state.SearchMode == "full-text" {
+		search.mode = modeFullText
+	}
+
 	return Model{
 		db:        db,
 		pricing:   p,
-		activeTab: tabRecent,
+		cfg:       cfg,
+		statePath: statePath,
+		activeTab: tab,
 		status:    "ready",
 		spin:      sp,
 		detailCtx: newDetailContext(sessions, p),
-		recent:    newRecentView(sessions, p),
-		search:    newSearchView(db, p, sessions),
+		recent:    recent,
+		search:    search,
 		stats:     newStatsView(sessions, p),
 		costs:     newCostsView(sessions, p),
 		timeline:  newTimelineView(sessions, p),
 		tools:     newToolsView(sessions),
+	}
+}
+
+func tabFromName(name string) tabID {
+	for i, n := range tabNames {
+		if n == name {
+			return tabID(i)
+		}
+	}
+	return -1
+}
+
+func (m Model) currentState() *config.State {
+	mode := "metadata"
+	if m.search.mode == modeFullText {
+		mode = "full-text"
+	}
+	return &config.State{
+		LastTab:              tabNames[m.activeTab],
+		RecentGroupByProject: m.recent.groupByProject,
+		SearchMode:           mode,
 	}
 }
 
@@ -147,6 +190,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch {
 		case keyMatches(k, keys.Quit):
+			if m.statePath != "" {
+				_ = config.SaveState(m.statePath, m.currentState())
+			}
 			return m, tea.Quit
 		case keyMatches(k, keys.NextTab):
 			m.activeTab = (m.activeTab + 1) % numTabs
@@ -233,6 +279,8 @@ func (m *Model) moveCursor(delta int) {
 		m.recent.cursor = clamp(m.recent.cursor+delta, 0, len(m.recent.sessions)-1)
 	case tabSearch:
 		m.search.cursor = clamp(m.search.cursor+delta, 0, len(m.search.results)-1)
+	case tabTools:
+		m.tools.cursor = clamp(m.tools.cursor+delta, 0, len(m.tools.stats)-1)
 	}
 }
 
@@ -242,6 +290,8 @@ func (m *Model) cursorTo(pos int) {
 		m.recent.cursor = clamp(pos, 0, len(m.recent.sessions)-1)
 	case tabSearch:
 		m.search.cursor = clamp(pos, 0, len(m.search.results)-1)
+	case tabTools:
+		m.tools.cursor = clamp(pos, 0, len(m.tools.stats)-1)
 	}
 }
 
@@ -322,7 +372,10 @@ func (m Model) renderWide(h int) string {
 	case tabTimeline:
 		return left.Render(m.timeline.View(m.width))
 	case tabTools:
-		return left.Render(m.tools.View(m.width))
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			left.Render(m.tools.View(leftW)),
+			right.Render(m.tools.renderDrillDown(rightW)),
+		)
 	}
 	return ""
 }
