@@ -60,7 +60,16 @@ RESPONDA SÓ COM O JSON ARRAY, SEM MARKDOWN, SEM TEXTO AO REDOR.
 Exemplo de formato:
 [{"type":"token_waste","title":"...","description":"...","evidence":"...","suggested_action":"..."}]`
 
-const profilePromptPT = `Com base nos resumos de conversas e insights abaixo, escreva um perfil em pt-BR de quem é esse dev.
+const profilePromptPT = `Escreva um perfil em pt-BR desse dev com base nas evidências abaixo.
+
+%sTECNOLOGIAS DETECTADAS (frequência de menções no histórico):
+%s
+
+TOOLS MAIS USADOS:
+%s
+
+PALAVRAS/BIGRAMS RECORRENTES:
+%s
 
 RESUMOS DAS SESSIONS:
 %s
@@ -68,9 +77,15 @@ RESUMOS DAS SESSIONS:
 INSIGHTS DETECTADOS:
 %s
 
-ESCREVA o perfil em parágrafos curtos, focando em:
-- Stack técnica preferida
-- Workflow / metodologia (design-first, TDD, etc)
+REGRAS RÍGIDAS:
+- Stack técnica: cite APENAS tecnologias que aparecem em "TECNOLOGIAS DETECTADAS". NUNCA invente ou infira (ex: não cite Ruby, Java, .NET se não estiverem listados).
+- Se a seção "SOBRE O DEV" estiver presente acima, ela tem PRIORIDADE sobre o resto pra dados pessoais (nome, cargo, stack).
+- Se faltar evidência pra alguma seção (ex: workflow), omita em vez de inventar.
+- Não cite ferramentas de setup pessoal (Homebrew, mise, Hammerspoon) como "stack técnica" — elas vão na seção de ambiente, se mencionar.
+
+ESTRUTURA do perfil (parágrafos curtos):
+- Stack técnica (APENAS o que está em TECNOLOGIAS DETECTADAS)
+- Workflow / metodologia (design-first, TDD, conventional commits, etc — só se houver evidência)
 - Anti-patterns que evita
 - Frustrações recorrentes
 - Estilo de comunicação
@@ -229,9 +244,13 @@ func parseInsights(raw string) ([]*index.Insight, error) {
 	return out, nil
 }
 
-// GenerateProfile carrega summaries + insights, monta prompt de perfil, salva no DB.
+// GenerateProfile carrega summaries + insights + tech detectada e gera perfil.
 func GenerateProfile(ctx context.Context, db *index.DB, client *Client, genModel string) (string, error) {
 	caches, err := db.AICacheList()
+	if err != nil {
+		return "", err
+	}
+	sessions, err := db.ListSessions()
 	if err != nil {
 		return "", err
 	}
@@ -252,7 +271,71 @@ func GenerateProfile(ctx context.Context, db *index.DB, client *Client, genModel
 		insightsB.WriteString("(insights ainda não gerados)")
 	}
 
-	prompt := fmt.Sprintf(profilePromptPT, summariesB.String(), insightsB.String())
+	// Tech detection
+	techs := DetectTech(sessions)
+	var techB strings.Builder
+	if len(techs) == 0 {
+		techB.WriteString("(nenhuma tecnologia conhecida detectada)\n")
+	}
+	for _, t := range techs {
+		fmt.Fprintf(&techB, "- %s: %d menções\n", t.Name, t.Count)
+	}
+
+	// Tools
+	toolFreq := map[string]int{}
+	for _, s := range sessions {
+		for t, n := range s.ToolCalls {
+			toolFreq[t] += n
+		}
+	}
+	type kv struct {
+		k string
+		v int
+	}
+	var toolPairs []kv
+	for k, v := range toolFreq {
+		toolPairs = append(toolPairs, kv{k, v})
+	}
+	sort.Slice(toolPairs, func(i, j int) bool {
+		if toolPairs[i].v != toolPairs[j].v {
+			return toolPairs[i].v > toolPairs[j].v
+		}
+		return toolPairs[i].k < toolPairs[j].k
+	})
+	var toolsB strings.Builder
+	for i, p := range toolPairs {
+		if i >= 8 {
+			break
+		}
+		fmt.Fprintf(&toolsB, "- %s: %d\n", p.k, p.v)
+	}
+
+	// Words/bigrams
+	words := stats.TopWords(sessions, 10)
+	bigrams := stats.TopBigrams(sessions, 8)
+	var wordsB strings.Builder
+	for _, w := range words {
+		fmt.Fprintf(&wordsB, "- %s (%d)\n", w.Word, w.Count)
+	}
+	for _, b := range bigrams {
+		fmt.Fprintf(&wordsB, "- %s %s (%d)\n", b.A, b.B, b.Count)
+	}
+
+	// About override (~/.claude-history/about.txt)
+	about := loadAboutOverride()
+	aboutSection := ""
+	if about != "" {
+		aboutSection = "SOBRE O DEV (auto-descrição, prioridade máxima):\n" + about + "\n\n"
+	}
+
+	prompt := fmt.Sprintf(profilePromptPT,
+		aboutSection,
+		techB.String(),
+		toolsB.String(),
+		wordsB.String(),
+		summariesB.String(),
+		insightsB.String(),
+	)
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	out, err := client.GenerateLong(cctx, genModel, prompt)
