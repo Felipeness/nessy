@@ -23,11 +23,14 @@ const (
 	tabSearch tabID = iota
 	tabRecent
 	tabStats
+	tabCosts
+	tabTimeline
+	tabTools
 )
 
-var tabNames = []string{"Search", "Recent", "Stats"}
+var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools"}
 
-const numTabs = 3
+const numTabs = 6
 
 const wideCols = 120
 
@@ -47,6 +50,9 @@ type Model struct {
 	recent      recentView
 	search      searchView
 	stats       statsView
+	costs       costsView
+	timeline    timelineView
+	tools       toolsView
 }
 
 // New cria o root model carregando sessions do cache.
@@ -65,6 +71,9 @@ func New(db *index.DB, p *pricing.Pricing) Model {
 		recent:    newRecentView(sessions, p),
 		search:    newSearchView(db, p, sessions),
 		stats:     newStatsView(sessions, p),
+		costs:     newCostsView(sessions, p),
+		timeline:  newTimelineView(sessions, p),
+		tools:     newToolsView(sessions),
 	}
 }
 
@@ -77,6 +86,9 @@ func (m *Model) reload() {
 	m.recent = newRecentView(sessions, m.pricing)
 	m.search = newSearchView(m.db, m.pricing, sessions)
 	m.stats = newStatsView(sessions, m.pricing)
+	m.costs = newCostsView(sessions, m.pricing)
+	m.timeline = newTimelineView(sessions, m.pricing)
+	m.tools = newToolsView(sessions)
 }
 
 // Update handles messages.
@@ -150,6 +162,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(k, keys.Tab3):
 			m.activeTab = tabStats
+			return m, nil
+		case keyMatches(k, keys.Tab4):
+			m.activeTab = tabCosts
+			return m, nil
+		case keyMatches(k, keys.Tab5):
+			m.activeTab = tabTimeline
+			return m, nil
+		case keyMatches(k, keys.Tab6):
+			m.activeTab = tabTools
 			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
@@ -296,6 +317,12 @@ func (m Model) renderWide(h int) string {
 			left.Render(m.stats.renderGlobal(leftW)),
 			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
 		)
+	case tabCosts:
+		return left.Render(m.costs.View(m.width))
+	case tabTimeline:
+		return left.Render(m.timeline.View(m.width))
+	case tabTools:
+		return left.Render(m.tools.View(m.width))
 	}
 	return ""
 }
@@ -311,6 +338,12 @@ func (m Model) renderNarrow(h int) string {
 			return m.detailCtx.renderDetail(m.recent.selected())
 		}
 		return m.stats.renderGlobal(m.width)
+	case tabCosts:
+		return m.costs.View(m.width)
+	case tabTimeline:
+		return m.timeline.View(m.width)
+	case tabTools:
+		return m.tools.View(m.width)
 	}
 	return ""
 }
