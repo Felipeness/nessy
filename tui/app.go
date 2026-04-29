@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/felipeness/claude-history/internal/ai"
 	"github.com/felipeness/claude-history/internal/config"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
@@ -28,11 +29,12 @@ const (
 	tabTimeline
 	tabTools
 	tabBehavior
+	tabAI
 )
 
-var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior"}
+var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior", "AI"}
 
-const numTabs = 7
+const numTabs = 8
 
 const wideCols = 120
 
@@ -58,10 +60,22 @@ type Model struct {
 	timeline    timelineView
 	tools       toolsView
 	behavior    behaviorView
+	ai          aiView
+	aiClient    *ai.Client
+	aiWorker    *ai.Worker
+}
+
+// AIDeps agrupa client e worker de AI (opcionais — nil se desabilitado).
+type AIDeps struct {
+	Enabled    bool
+	Client     *ai.Client
+	Worker     *ai.Worker
+	GenModel   string
+	EmbedModel string
 }
 
 // New cria o root model carregando sessions do cache + state persistido.
-func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.State, statePath string) Model {
+func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.State, statePath string, aiDeps AIDeps) Model {
 	sessions, _ := db.ListSessions()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -99,6 +113,9 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		timeline:  newTimelineView(sessions, p),
 		tools:     newToolsView(sessions),
 		behavior:  newBehaviorView(sessions, p),
+		ai:        newAIView(aiDeps.Enabled, aiDeps.Client, aiDeps.Worker, aiDeps.GenModel, aiDeps.EmbedModel, db, sessions),
+		aiClient:  aiDeps.Client,
+		aiWorker:  aiDeps.Worker,
 	}
 }
 
@@ -224,6 +241,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(k, keys.Tab7):
 			m.activeTab = tabBehavior
+			return m, nil
+		case keyMatches(k, keys.Tab8):
+			m.activeTab = tabAI
 			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
@@ -385,6 +405,8 @@ func (m Model) renderWide(h int) string {
 		)
 	case tabBehavior:
 		return left.Render(m.behavior.View(m.width))
+	case tabAI:
+		return left.Render(m.ai.View(m.width, m.recent.selected()))
 	}
 	return ""
 }
@@ -408,6 +430,8 @@ func (m Model) renderNarrow(h int) string {
 		return m.tools.View(m.width)
 	case tabBehavior:
 		return m.behavior.View(m.width)
+	case tabAI:
+		return m.ai.View(m.width, m.recent.selected())
 	}
 	return ""
 }

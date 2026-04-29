@@ -9,6 +9,7 @@ import { CostsTab } from './tabs/CostsTab'
 import { TimelineTab } from './tabs/TimelineTab'
 import { ToolsTab } from './tabs/ToolsTab'
 import { BehaviorTab } from './tabs/BehaviorTab'
+import { AITab } from './tabs/AITab'
 import { CompareTab } from './tabs/CompareTab'
 import type { ReindexStats, TabName } from './types'
 
@@ -20,6 +21,7 @@ const VALID_TABS: TabName[] = [
   'timeline',
   'tools',
   'behavior',
+  'ai',
   'compare',
 ]
 
@@ -74,6 +76,7 @@ export default function App() {
       {tab === 'timeline' && <TimelineTab reindexCounter={reindexCounter} />}
       {tab === 'tools' && <ToolsTab reindexCounter={reindexCounter} />}
       {tab === 'behavior' && <BehaviorTab reindexCounter={reindexCounter} />}
+      {tab === 'ai' && <AITab reindexCounter={reindexCounter} />}
       {tab === 'compare' && <CompareTab reindexCounter={reindexCounter} />}
     </Layout>
   )

@@ -140,7 +140,36 @@ export type TabName =
   | 'timeline'
   | 'tools'
   | 'behavior'
+  | 'ai'
   | 'compare'
+
+export type AIHealth = {
+  enabled: boolean
+  ollama_reachable: boolean
+  gen_model: string
+  embed_model: string
+  cached: number
+  total: number
+  queued: number
+}
+
+export type AISummary = {
+  session_id: string
+  summary: string
+  cluster: number
+  label: string
+}
+
+export type ClusterInfo = {
+  cluster_id: number
+  label: string
+  session_ids: string[]
+}
+
+export type SimilarResult = {
+  session_id: string
+  similarity: number
+}
 
 export type Bigram = { A: string; B: string; Count: number }
 export type Trigram = { A: string; B: string; C: string; Count: number }

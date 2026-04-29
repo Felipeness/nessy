@@ -282,7 +282,26 @@ cache_creation_per_mtok = 1.25
 cache_read_per_mtok = 0.10
 `
 
-func cmdTui(_ []string) {
+func cmdTui(args []string) {
+	noAI := false
+	aiModelOverride := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-ai":
+			noAI = true
+		case "--ai-model":
+			if i+1 < len(args) {
+				aiModelOverride = args[i+1]
+				i++
+			}
+		}
+	}
+	_ = noAI
+	_ = aiModelOverride
+	cmdTuiInternal(noAI, aiModelOverride)
+}
+
+func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	home, _ := os.UserHomeDir()
 	cacheDir := filepath.Join(home, ".claude-history")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -317,7 +336,35 @@ func cmdTui(_ []string) {
 	cfg, _ := config.LoadConfig(configPath)
 	state := config.LoadState(statePath)
 
-	prog := tea.NewProgram(tui.New(db, p, cfg, state, statePath), tea.WithAltScreen())
+	aiDeps := tui.AIDeps{}
+	if cfg.AI.Enabled {
+		client := ai.NewClient(cfg.AI.OllamaURL)
+		worker := ai.NewWorker(db, client, cfg.AI.GenModel, cfg.AI.EmbedModel, nil)
+		aiDeps = tui.AIDeps{
+			Enabled:    true,
+			Client:     client,
+			Worker:     worker,
+			GenModel:   cfg.AI.GenModel,
+			EmbedModel: cfg.AI.EmbedModel,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go worker.Run(ctx)
+		if cfg.AI.AutoGenerate && client.Health(ctx) {
+			go func() {
+				all, _ := db.ListSessions()
+				for _, sess := range all {
+					c, err := db.AICacheGet(sess.SessionID)
+					if err == nil && c.Summary != "" && c.JSONLMtime == sess.JSONLMtime.UnixNano() {
+						continue
+					}
+					worker.Enqueue(sess.SessionID)
+				}
+			}()
+		}
+	}
+
+	prog := tea.NewProgram(tui.New(db, p, cfg, state, statePath, aiDeps), tea.WithAltScreen())
 	if _, err := prog.Run(); err != nil {
 		fatal(err)
 	}
