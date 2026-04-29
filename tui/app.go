@@ -3,11 +3,15 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/pricing"
 )
 
@@ -31,15 +35,35 @@ type Model struct {
 	height    int
 	activeTab tabID
 	status    string
+	showHelp  bool
+	recent    recentView
+	search    searchView
+	stats     statsView
 }
 
-// New cria o root model. Tab default é Recent (caso de uso mais comum).
+// New cria o root model carregando sessions do cache.
 func New(db *index.DB, p *pricing.Pricing) Model {
-	return Model{db: db, pricing: p, activeTab: tabRecent, status: "ready"}
+	sessions, _ := db.ListSessions()
+	return Model{
+		db:        db,
+		pricing:   p,
+		activeTab: tabRecent,
+		status:    "ready",
+		recent:    newRecentView(sessions),
+		search:    newSearchView(db, sessions),
+		stats:     newStatsView(sessions, p),
+	}
 }
 
 // Init satisfies tea.Model.
 func (m Model) Init() tea.Cmd { return nil }
+
+func (m *Model) reload() {
+	sessions, _ := m.db.ListSessions()
+	m.recent = newRecentView(sessions)
+	m.search = newSearchView(m.db, sessions)
+	m.stats = newStatsView(sessions, m.pricing)
+}
 
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -47,8 +71,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+
+	case refreshDoneMsg:
+		if msg.err != nil {
+			m.status = "refresh error: " + msg.err.Error()
+		} else {
+			m.status = fmt.Sprintf("refresh: +%d new, %d updated, %d removed",
+				msg.stats.New, msg.stats.Updated, msg.stats.Removed)
+			m.reload()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		k := msg.String()
+
+		// Help overlay sempre captura ?
+		if keyMatches(k, keys.Help) {
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+		if m.showHelp {
+			// qualquer tecla fecha help
+			m.showHelp = false
+			return m, nil
+		}
+
+		// Search tab quando ativa: input box recebe a maioria das teclas
+		if m.activeTab == tabSearch && !isGlobalKey(k) {
+			var cmd tea.Cmd
+			m.search.input, cmd = m.search.input.Update(msg)
+			m.search.Filter(m.search.input.Value())
+			return m, cmd
+		}
+
 		switch {
 		case keyMatches(k, keys.Quit):
 			return m, tea.Quit
@@ -58,9 +113,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.PrevTab):
 			m.activeTab = (m.activeTab + 2) % 3
 			return m, nil
+		case keyMatches(k, keys.Up):
+			m.moveCursor(-1)
+			return m, nil
+		case keyMatches(k, keys.Down):
+			m.moveCursor(+1)
+			return m, nil
+		case keyMatches(k, keys.Group):
+			if m.activeTab == tabRecent {
+				m.recent.groupByProject = !m.recent.groupByProject
+			}
+			return m, nil
+		case keyMatches(k, keys.Stats):
+			if m.activeTab == tabStats && m.width < wideCols {
+				m.stats.showLocal = !m.stats.showLocal
+			}
+			return m, nil
+		case keyMatches(k, keys.Refresh):
+			m.status = "refreshing…"
+			return m, refreshCmd(m.db, claudeProjectsRoot())
+		case keyMatches(k, keys.Enter):
+			s := m.selectedForActiveTab()
+			if s != nil {
+				return m, tea.Batch(tea.ExitAltScreen, resumeCmd(s), tea.Quit)
+			}
+			return m, nil
+		case keyMatches(k, keys.OpenDir):
+			s := m.selectedForActiveTab()
+			if s != nil {
+				_ = exec.Command("open", s.ProjectDir).Start()
+			}
+			return m, nil
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) moveCursor(delta int) {
+	switch m.activeTab {
+	case tabRecent:
+		m.recent.cursor = clamp(m.recent.cursor+delta, 0, len(m.recent.sessions)-1)
+	case tabSearch:
+		m.search.cursor = clamp(m.search.cursor+delta, 0, len(m.search.results)-1)
+	}
+}
+
+func (m Model) selectedForActiveTab() *model.Session {
+	switch m.activeTab {
+	case tabRecent:
+		return m.recent.selected()
+	case tabSearch:
+		return m.search.selected()
+	case tabStats:
+		return m.recent.selected()
+	}
+	return nil
 }
 
 // View renders.
@@ -68,7 +175,15 @@ func (m Model) View() string {
 	tabBar := m.renderTabBar()
 	body := m.renderBody()
 	status := m.renderStatusBar()
-	return lipgloss.JoinVertical(lipgloss.Left, tabBar, body, status)
+	out := lipgloss.JoinVertical(lipgloss.Left, tabBar, body, status)
+	if m.showHelp {
+		help := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			Padding(1, 2).
+			Render(helpText())
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, help)
+	}
+	return out
 }
 
 func (m Model) renderTabBar() string {
@@ -88,18 +203,124 @@ func (m Model) renderBody() string {
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
-	style := lipgloss.NewStyle().Width(m.width).Height(bodyHeight)
+	if m.width >= wideCols {
+		return m.renderWide(bodyHeight)
+	}
+	return m.renderNarrow(bodyHeight)
+}
+
+func (m Model) renderWide(h int) string {
+	leftW := m.width * 4 / 10
+	rightW := m.width - leftW
+	left := lipgloss.NewStyle().Width(leftW).Height(h)
+	right := lipgloss.NewStyle().Width(rightW).Height(h).Padding(0, 1)
 	switch m.activeTab {
 	case tabSearch:
-		return style.Render("(search tab — task 10)")
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			left.Render(m.search.View(leftW, h)),
+			right.Render(renderDetail(m.search.selected(), m.pricing)),
+		)
 	case tabRecent:
-		return style.Render("(recent tab — task 9)")
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			left.Render(m.recent.View(leftW, h)),
+			right.Render(renderDetail(m.recent.selected(), m.pricing)),
+		)
 	case tabStats:
-		return style.Render("(stats tab — task 12)")
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			left.Render(m.stats.renderGlobal(leftW)),
+			right.Render(renderDetail(m.recent.selected(), m.pricing)),
+		)
+	}
+	return ""
+}
+
+func (m Model) renderNarrow(h int) string {
+	switch m.activeTab {
+	case tabSearch:
+		return m.search.View(m.width, h)
+	case tabRecent:
+		return m.recent.View(m.width, h)
+	case tabStats:
+		if m.stats.showLocal {
+			return renderDetail(m.recent.selected(), m.pricing)
+		}
+		return m.stats.renderGlobal(m.width)
 	}
 	return ""
 }
 
 func (m Model) renderStatusBar() string {
 	return statusBarStyle.Width(m.width).Render(fmt.Sprintf(" %s ", m.status))
+}
+
+func helpText() string {
+	return `KEYBINDS
+
+Tab / Shift+Tab    trocar tab
+j / k              navegar lista
+Enter              retomar session
+/ ou f             search box
+:body <q>          full-text search
+g                  toggle agrupamento (Recent)
+s                  toggle stats local (narrow)
+r                  refresh
+?                  toggle help (esta tela)
+q ou Esc           quit
+Ctrl+O             abrir pasta no Finder
+
+Pressiona qualquer tecla pra fechar.`
+}
+
+func isGlobalKey(k string) bool {
+	switch k {
+	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o":
+		return true
+	}
+	return false
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// resumeMsg is the result of trying to launch claude --resume.
+type resumeMsg struct{ err error }
+
+func resumeCmd(s *model.Session) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return resumeMsg{}
+		}
+		claude, err := exec.LookPath("claude")
+		if err != nil {
+			return resumeMsg{err: err}
+		}
+		c := exec.Command(claude, "--resume", s.SessionID)
+		c.Dir = s.ProjectDir
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return resumeMsg{err: c.Run()}
+	}
+}
+
+type refreshDoneMsg struct {
+	stats index.ReindexStats
+	err   error
+}
+
+func refreshCmd(db *index.DB, root string) tea.Cmd {
+	return func() tea.Msg {
+		stats, err := db.Reindex(root)
+		return refreshDoneMsg{stats: stats, err: err}
+	}
+}
+
+func claudeProjectsRoot() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "projects")
 }
