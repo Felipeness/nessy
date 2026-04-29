@@ -22,6 +22,8 @@ type aiView struct {
 	db         *index.DB
 	sessions   []*model.Session
 	caches     map[string]*index.AICache
+	insights   []*index.Insight
+	profile    string
 }
 
 func newAIView(enabled bool, client *ai.Client, worker *ai.Worker, genModel, embedModel string, db *index.DB, sessions []*model.Session) aiView {
@@ -40,6 +42,8 @@ func newAIView(enabled bool, client *ai.Client, worker *ai.Worker, genModel, emb
 		for _, c := range all {
 			v.caches[c.SessionID] = c
 		}
+		v.insights, _ = db.InsightsList()
+		v.profile, _, _ = db.ProfileGet()
 	}
 	return v
 }
@@ -148,6 +152,37 @@ func (v aiView) View(width int, selected *model.Session) string {
 		b.WriteByte('\n')
 	}
 
+	// Insights
+	fmt.Fprintln(&b, header.Render("💡 Insights & advisor"))
+	if len(v.insights) == 0 {
+		fmt.Fprintln(&b, muted.Render("  (sem insights — POST /api/ai/insights/generate pra rodar)"))
+	} else {
+		for _, ins := range v.insights {
+			icon := insightIconTUI(ins.Type)
+			fmt.Fprintf(&b, "  %s [%s] %s\n", icon, ins.Type, ins.Title)
+			if ins.Description != "" {
+				fmt.Fprintf(&b, "      %s\n", ins.Description)
+			}
+			if ins.SuggestedAction != "" {
+				fmt.Fprintf(&b, "      → %s\n", ins.SuggestedAction)
+			}
+		}
+	}
+	b.WriteByte('\n')
+
+	// Profile
+	fmt.Fprintln(&b, header.Render("🧠 Personal profile"))
+	if v.profile == "" {
+		fmt.Fprintln(&b, muted.Render("  (sem profile — POST /api/ai/profile/generate pra gerar)"))
+	} else {
+		// imprime line-wrapped
+		lines := strings.Split(v.profile, "\n")
+		for _, l := range lines {
+			fmt.Fprintf(&b, "  %s\n", l)
+		}
+	}
+	b.WriteByte('\n')
+
 	// Recent summaries
 	fmt.Fprintln(&b, header.Render("📋 Recent summaries (top 10)"))
 	type entry struct {
@@ -172,4 +207,24 @@ func (v aiView) View(width int, selected *model.Session) string {
 	}
 
 	return lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
+}
+
+func insightIconTUI(t string) string {
+	switch t {
+	case "repeated_task":
+		return "🔁"
+	case "chronic_problem":
+		return "⚠️"
+	case "script_opportunity":
+		return "🚀"
+	case "token_waste":
+		return "💸"
+	case "performance_hint":
+		return "⚡"
+	case "anti_pattern":
+		return "🚫"
+	case "personal_pattern":
+		return "🎯"
+	}
+	return "💡"
 }

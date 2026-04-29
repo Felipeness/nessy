@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { AIHealth, AISummary, ClusterInfo, Session, SimilarResult } from '../types'
+import { useSSE } from '../sse'
+import type {
+  AIHealth,
+  AISummary,
+  ClusterInfo,
+  Insight,
+  Profile,
+  Session,
+  SimilarResult,
+} from '../types'
 
 type Props = { reindexCounter: number }
 
@@ -11,23 +20,31 @@ export function AITab({ reindexCounter }: Props) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [similar, setSimilar] = useState<SimilarResult[]>([])
+  const [insights, setInsights] = useState<Insight[]>([])
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [genStatus, setGenStatus] = useState<string>('')
 
+  // health + sessions sempre carregam ao montar / quando refresh externo
   useEffect(() => {
     api.aiHealth().then(setHealth).catch(() => setHealth(null))
     api.sessions().then(setSessions)
-    if (health?.enabled) {
-      api.aiSummaries().then(setSummaries)
-      api.aiClusters().then(setClusters)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reindexCounter])
+
+  // summaries + clusters + insights + profile dependem de health.enabled
+  useEffect(() => {
+    if (!health?.enabled) return
+    api.aiSummaries().then(setSummaries).catch(() => {})
+    api.aiClusters().then(setClusters).catch(() => {})
+    api.aiInsights().then(setInsights).catch(() => {})
+    api.aiProfile().then(setProfile).catch(() => {})
+  }, [health?.enabled, reindexCounter])
 
   useEffect(() => {
     if (!selectedId) return
     api.aiSimilar(selectedId, 10).then(setSimilar).catch(() => setSimilar([]))
   }, [selectedId])
 
+  // poll periódico pra capturar progress de auto-generate em background
   useEffect(() => {
     if (!health?.enabled || !health.ollama_reachable) return
     const t = setInterval(() => {
@@ -36,6 +53,46 @@ export function AITab({ reindexCounter }: Props) {
     }, 4000)
     return () => clearInterval(t)
   }, [health?.enabled, health?.ollama_reachable])
+
+  // SSE: quando backend termina recompute de clusters, refetch
+  const clustersDone = useSSE<{ clusters: ClusterInfo[] }>('clusters_done')
+  useEffect(() => {
+    if (!clustersDone) return
+    setGenStatus('clusters atualizados')
+    api.aiClusters().then(setClusters).catch(() => {})
+    api.aiSummaries().then(setSummaries).catch(() => {})
+  }, [clustersDone])
+
+  // SSE: quando uma session ganha resumo, refetch summaries pra atualizar
+  const summaryDone = useSSE<{ session_id: string }>('summary_done')
+  useEffect(() => {
+    if (!summaryDone || !health?.enabled) return
+    api.aiSummaries().then(setSummaries).catch(() => {})
+    api.aiHealth().then(setHealth).catch(() => {})
+  }, [summaryDone, health?.enabled])
+
+  // SSE: insights e profile
+  const insightsDone = useSSE<{ count: number; error?: string }>('insights_done')
+  useEffect(() => {
+    if (!insightsDone) return
+    if (insightsDone.error) {
+      setGenStatus('insights error: ' + insightsDone.error)
+      return
+    }
+    setGenStatus(`${insightsDone.count} insights gerados`)
+    api.aiInsights().then(setInsights).catch(() => {})
+  }, [insightsDone])
+
+  const profileDone = useSSE<{ length: number; error?: string }>('profile_done')
+  useEffect(() => {
+    if (!profileDone) return
+    if (profileDone.error) {
+      setGenStatus('profile error: ' + profileDone.error)
+      return
+    }
+    setGenStatus('profile atualizado')
+    api.aiProfile().then(setProfile).catch(() => {})
+  }, [profileDone])
 
   if (!health) return <p className="p-6 text-zinc-400">Carregando…</p>
 
@@ -85,6 +142,17 @@ export function AITab({ reindexCounter }: Props) {
     await api.aiRecomputeClusters()
     setGenStatus('clusters recomputados em background')
   }
+  const handleGenInsights = async () => {
+    setGenStatus('analisando padrões…')
+    await api.aiInsightsGenerate()
+  }
+  const handleGenProfile = async () => {
+    setGenStatus('gerando profile…')
+    await api.aiProfileGenerate()
+  }
+  const copyProfile = () => {
+    if (profile?.content) navigator.clipboard.writeText(profile.content)
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -97,7 +165,7 @@ export function AITab({ reindexCounter }: Props) {
             {health.queued}
           </p>
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex gap-2 flex-wrap">
           <button
             onClick={handleGenerateAll}
             className="px-3 py-1 rounded border border-[#30363d] text-sm hover:bg-[#0d1117]"
@@ -110,8 +178,79 @@ export function AITab({ reindexCounter }: Props) {
           >
             🔄 Recompute clusters
           </button>
+          <button
+            onClick={handleGenInsights}
+            className="px-3 py-1 rounded border border-[#30363d] text-sm hover:bg-[#0d1117]"
+          >
+            💡 Gerar insights
+          </button>
+          <button
+            onClick={handleGenProfile}
+            className="px-3 py-1 rounded border border-[#30363d] text-sm hover:bg-[#0d1117]"
+          >
+            🧠 Gerar profile
+          </button>
           {genStatus && <span className="text-xs text-zinc-400 self-center">{genStatus}</span>}
         </div>
+      </section>
+
+      {/* Insights */}
+      <section className="bg-[#161b22] rounded p-4 border border-[#30363d]">
+        <h2 className="font-bold mb-3">💡 Insights & advisor</h2>
+        {insights.length === 0 ? (
+          <p className="text-sm text-zinc-500">
+            Nenhum insight ainda. Clica "Gerar insights" pra a IA analisar seus padrões.
+          </p>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-3">
+            {insights.map((i) => (
+              <div
+                key={i.ID}
+                className={`bg-[#0d1117] rounded p-3 border-l-4 ${insightColor(i.Type)}`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-mono text-zinc-500">{insightIcon(i.Type)}</span>
+                  <span className="text-xs uppercase text-zinc-500">{i.Type.replace(/_/g, ' ')}</span>
+                </div>
+                <h3 className="font-bold text-sm mb-1">{i.Title}</h3>
+                <p className="text-xs text-zinc-300 mb-2">{i.Description}</p>
+                {i.SuggestedAction && (
+                  <p className="text-xs text-blue-400">→ {i.SuggestedAction}</p>
+                )}
+                {i.Evidence && (
+                  <p className="text-[10px] text-zinc-600 mt-2 font-mono truncate" title={i.Evidence}>
+                    {i.Evidence}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Personal profile */}
+      <section className="bg-[#161b22] rounded p-4 border border-[#30363d]">
+        <div className="flex items-center mb-3">
+          <h2 className="font-bold">🧠 Personal profile</h2>
+          {profile?.content && (
+            <button
+              onClick={copyProfile}
+              className="ml-auto px-2 py-1 rounded border border-[#30363d] text-xs hover:bg-[#0d1117]"
+            >
+              📋 Copiar
+            </button>
+          )}
+        </div>
+        {profile?.content ? (
+          <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-sans">
+            {profile.content}
+          </pre>
+        ) : (
+          <p className="text-sm text-zinc-500">
+            Nenhum profile ainda. Clica "Gerar profile" pra a IA criar uma representação textual de
+            quem você é.
+          </p>
+        )}
       </section>
 
       {/* Clusters */}
@@ -208,4 +347,46 @@ export function AITab({ reindexCounter }: Props) {
       </section>
     </div>
   )
+}
+
+function insightColor(type: string): string {
+  switch (type) {
+    case 'repeated_task':
+      return 'border-blue-500'
+    case 'chronic_problem':
+      return 'border-red-500'
+    case 'script_opportunity':
+      return 'border-green-500'
+    case 'token_waste':
+      return 'border-orange-500'
+    case 'performance_hint':
+      return 'border-purple-500'
+    case 'anti_pattern':
+      return 'border-pink-500'
+    case 'personal_pattern':
+      return 'border-yellow-500'
+    default:
+      return 'border-zinc-500'
+  }
+}
+
+function insightIcon(type: string): string {
+  switch (type) {
+    case 'repeated_task':
+      return '🔁'
+    case 'chronic_problem':
+      return '⚠️'
+    case 'script_opportunity':
+      return '🚀'
+    case 'token_waste':
+      return '💸'
+    case 'performance_hint':
+      return '⚡'
+    case 'anti_pattern':
+      return '🚫'
+    case 'personal_pattern':
+      return '🎯'
+    default:
+      return '💡'
+  }
 }

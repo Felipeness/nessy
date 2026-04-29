@@ -40,6 +40,72 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/ai/clusters/recompute", s.handleAIRecomputeClusters)
 	mux.HandleFunc("/api/ai/generate-all", s.handleAIGenerateAll)
 	mux.HandleFunc("/api/ai/generate/", s.handleAIGenerateOne)
+	mux.HandleFunc("/api/ai/insights", s.handleAIInsights)
+	mux.HandleFunc("/api/ai/insights/generate", s.handleAIGenerateInsights)
+	mux.HandleFunc("/api/ai/profile", s.handleAIProfile)
+	mux.HandleFunc("/api/ai/profile/generate", s.handleAIGenerateProfile)
+}
+
+func (s *Server) handleAIInsights(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	list, err := s.DB.InsightsList()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, list)
+}
+
+func (s *Server) handleAIGenerateInsights(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	go func() {
+		out, err := ai.GenerateInsights(context.Background(), s.DB, s.AIClient, s.GenModel)
+		if err != nil {
+			s.Hub.Broadcast("insights_done", map[string]any{"error": err.Error()})
+			return
+		}
+		s.Hub.Broadcast("insights_done", map[string]any{"count": len(out)})
+	}()
+	writeJSON(w, 202, map[string]string{"status": "running"})
+}
+
+func (s *Server) handleAIProfile(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAI(w) {
+		return
+	}
+	content, ts, err := s.DB.ProfileGet()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"content": content, "generated_at": ts})
+}
+
+func (s *Server) handleAIGenerateProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	go func() {
+		out, err := ai.GenerateProfile(context.Background(), s.DB, s.AIClient, s.GenModel)
+		if err != nil {
+			s.Hub.Broadcast("profile_done", map[string]any{"error": err.Error()})
+			return
+		}
+		s.Hub.Broadcast("profile_done", map[string]any{"length": len(out)})
+	}()
+	writeJSON(w, 202, map[string]string{"status": "running"})
 }
 
 // withSessions é um helper que carrega sessions e responde com JSON ou erro.

@@ -66,6 +66,22 @@ CREATE TABLE IF NOT EXISTS ai_cache (
 	topic_label TEXT,
 	generated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_insights (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	type TEXT NOT NULL,
+	title TEXT NOT NULL,
+	description TEXT NOT NULL,
+	evidence TEXT,
+	suggested_action TEXT,
+	created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_profile (
+	id INTEGER PRIMARY KEY,
+	content TEXT NOT NULL,
+	generated_at INTEGER NOT NULL
+);
 `
 
 const currentSchemaVersion = "1"
@@ -322,6 +338,79 @@ type SearchResult struct {
 	Role      string
 	Snippet   string
 	Rank      float64
+}
+
+// Insight é um card sugerido pelo advisor AI.
+type Insight struct {
+	ID              int64
+	Type            string
+	Title           string
+	Description     string
+	Evidence        string
+	SuggestedAction string
+	CreatedAt       int64
+}
+
+func (db *DB) InsightsList() ([]*Insight, error) {
+	rows, err := db.conn.Query(`SELECT id, type, title, description, evidence, suggested_action, created_at FROM ai_insights ORDER BY created_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Insight
+	for rows.Next() {
+		var i Insight
+		var ev, sug sql.NullString
+		if err := rows.Scan(&i.ID, &i.Type, &i.Title, &i.Description, &ev, &sug, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		i.Evidence = ev.String
+		i.SuggestedAction = sug.String
+		out = append(out, &i)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) InsightsReplaceAll(insights []*Insight) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM ai_insights`); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for _, ins := range insights {
+		if _, err := tx.Exec(
+			`INSERT INTO ai_insights (type, title, description, evidence, suggested_action, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			ins.Type, ins.Title, ins.Description, ins.Evidence, ins.SuggestedAction, now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (db *DB) ProfileGet() (string, int64, error) {
+	row := db.conn.QueryRow(`SELECT content, generated_at FROM ai_profile WHERE id = 1`)
+	var content string
+	var ts int64
+	if err := row.Scan(&content, &ts); err != nil {
+		if err == sql.ErrNoRows {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	return content, ts, nil
+}
+
+func (db *DB) ProfileSet(content string) error {
+	_, err := db.conn.Exec(`
+INSERT INTO ai_profile (id, content, generated_at) VALUES (1, ?, ?)
+ON CONFLICT(id) DO UPDATE SET content=excluded.content, generated_at=excluded.generated_at`,
+		content, time.Now().Unix())
+	return err
 }
 
 // HasFTS5 returns true if the loaded SQLite was built with FTS5 support.

@@ -68,15 +68,25 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// Generate chama /api/generate (non-streaming).
+// Generate chama /api/generate (non-streaming) com 2048 tokens de output.
 func (c *Client) Generate(ctx context.Context, model, prompt string) (string, error) {
+	return c.generate(ctx, model, prompt, 2048)
+}
+
+// GenerateLong é como Generate mas com 4096 tokens — pra outputs longos
+// (insights JSON, profile detalhado).
+func (c *Client) GenerateLong(ctx context.Context, model, prompt string) (string, error) {
+	return c.generate(ctx, model, prompt, 4096)
+}
+
+func (c *Client) generate(ctx context.Context, model, prompt string, numPredict int) (string, error) {
 	body := map[string]any{
 		"model":  model,
 		"prompt": prompt,
 		"stream": false,
 		"options": map[string]any{
 			"temperature": 0.3,
-			"num_predict": 100,
+			"num_predict": numPredict,
 		},
 	}
 	buf, _ := json.Marshal(body)

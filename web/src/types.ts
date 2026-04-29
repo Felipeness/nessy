@@ -171,6 +171,21 @@ export type SimilarResult = {
   similarity: number
 }
 
+export type Insight = {
+  ID: number
+  Type: string
+  Title: string
+  Description: string
+  Evidence: string
+  SuggestedAction: string
+  CreatedAt: number
+}
+
+export type Profile = {
+  content: string
+  generated_at: number
+}
+
 export type Bigram = { A: string; B: string; Count: number }
 export type Trigram = { A: string; B: string; C: string; Count: number }
 export type CoOccur = { A: string; B: string; Count: number; PMI: number }

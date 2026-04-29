@@ -5,7 +5,9 @@ import type {
   BehaviorAdvanced,
   ClusterInfo,
   Costs,
+  Insight,
   Message,
+  Profile,
   ReindexStats,
   SearchResponse,
   Session,
@@ -57,4 +59,8 @@ export const api = {
   aiGenerateAll: () => post<{ queued: number }>('/api/ai/generate-all'),
   aiGenerateOne: (id: string) => post<{ status: string }>(`/api/ai/generate/${id}`),
   aiRecomputeClusters: () => post<{ status: string }>('/api/ai/clusters/recompute'),
+  aiInsights: () => get<Insight[]>('/api/ai/insights'),
+  aiInsightsGenerate: () => post<{ status: string }>('/api/ai/insights/generate'),
+  aiProfile: () => get<Profile>('/api/ai/profile'),
+  aiProfileGenerate: () => post<{ status: string }>('/api/ai/profile/generate'),
 }
