@@ -27,11 +27,12 @@ const (
 	tabCosts
 	tabTimeline
 	tabTools
+	tabBehavior
 )
 
-var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools"}
+var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior"}
 
-const numTabs = 6
+const numTabs = 7
 
 const wideCols = 120
 
@@ -56,6 +57,7 @@ type Model struct {
 	costs       costsView
 	timeline    timelineView
 	tools       toolsView
+	behavior    behaviorView
 }
 
 // New cria o root model carregando sessions do cache + state persistido.
@@ -96,6 +98,7 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		costs:     newCostsView(sessions, p),
 		timeline:  newTimelineView(sessions, p),
 		tools:     newToolsView(sessions),
+		behavior:  newBehaviorView(sessions, p),
 	}
 }
 
@@ -132,6 +135,7 @@ func (m *Model) reload() {
 	m.costs = newCostsView(sessions, m.pricing)
 	m.timeline = newTimelineView(sessions, m.pricing)
 	m.tools = newToolsView(sessions)
+	m.behavior = newBehaviorView(sessions, m.pricing)
 }
 
 // Update handles messages.
@@ -217,6 +221,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(k, keys.Tab6):
 			m.activeTab = tabTools
+			return m, nil
+		case keyMatches(k, keys.Tab7):
+			m.activeTab = tabBehavior
 			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
@@ -376,6 +383,8 @@ func (m Model) renderWide(h int) string {
 			left.Render(m.tools.View(leftW)),
 			right.Render(m.tools.renderDrillDown(rightW)),
 		)
+	case tabBehavior:
+		return left.Render(m.behavior.View(m.width))
 	}
 	return ""
 }
@@ -397,6 +406,8 @@ func (m Model) renderNarrow(h int) string {
 		return m.timeline.View(m.width)
 	case tabTools:
 		return m.tools.View(m.width)
+	case tabBehavior:
+		return m.behavior.View(m.width)
 	}
 	return ""
 }

@@ -28,6 +28,7 @@ type keymap struct {
 	Tab4    key.Binding
 	Tab5    key.Binding
 	Tab6    key.Binding
+	Tab7    key.Binding
 }
 
 var keys = keymap{
@@ -56,6 +57,7 @@ var keys = keymap{
 	Tab4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "→ Costs")),
 	Tab5:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "→ Timeline")),
 	Tab6:    key.NewBinding(key.WithKeys("6"), key.WithHelp("6", "→ Tools")),
+	Tab7:    key.NewBinding(key.WithKeys("7"), key.WithHelp("7", "→ Behavior")),
 }
 
 func keyMatches(msgKey string, b key.Binding) bool {

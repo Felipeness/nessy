@@ -21,6 +21,7 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/sessions/", s.handleSessionByID) // /api/sessions/<id> + /api/sessions/<id>/messages
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/stats/behavioral", s.handleBehavioral)
+	mux.HandleFunc("/api/behavior/advanced", s.handleBehaviorAdvanced)
 	mux.HandleFunc("/api/costs", s.handleCosts)
 	mux.HandleFunc("/api/timeline", s.handleTimeline)
 	mux.HandleFunc("/api/tools", s.handleTools)
@@ -228,6 +229,36 @@ func (s *Server) handleBehavioral(w http.ResponseWriter, r *http.Request) {
 		ErrorTotal:  total,
 		PeakHour:    stats.PeakHour(all),
 	})
+}
+
+// --- Behavior advanced ---
+
+type behaviorAdvancedResp struct {
+	Bigrams       []stats.Bigram        `json:"bigrams"`
+	Trigrams      []stats.Trigram       `json:"trigrams"`
+	CoOccurrences []stats.CoOccur       `json:"co_occurrences"`
+	Flow          stats.FlowSummary     `json:"flow"`
+	Style         stats.StyleStats      `json:"style"`
+	HighError     []stats.ErrorSession  `json:"high_error_sessions"`
+	TimeCost      []stats.TimeCostPoint `json:"time_cost_points"`
+}
+
+func (s *Server) handleBehaviorAdvanced(w http.ResponseWriter, r *http.Request) {
+	all, err := s.sessionsAll()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	resp := behaviorAdvancedResp{
+		Bigrams:       stats.TopBigrams(all, 20),
+		Trigrams:      stats.TopTrigrams(all, 12),
+		CoOccurrences: stats.CoOccurrences(all, 3, 30),
+		Flow:          stats.FlowDistribution(all),
+		Style:         stats.StyleComparison(all),
+		HighError:     stats.HighErrorSessions(all, 0.15),
+		TimeCost:      stats.TimeCostPoints(all, s.Pricing),
+	}
+	writeJSON(w, 200, resp)
 }
 
 // --- Costs ---

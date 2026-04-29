@@ -139,4 +139,42 @@ export type TabName =
   | 'costs'
   | 'timeline'
   | 'tools'
+  | 'behavior'
   | 'compare'
+
+export type Bigram = { A: string; B: string; Count: number }
+export type Trigram = { A: string; B: string; C: string; Count: number }
+export type CoOccur = { A: string; B: string; Count: number; PMI: number }
+export type FlowHist = { Bucket: string; Count: number }
+export type FlowSummary = { Hist: FlowHist[]; P50: number; P90: number; P99: number }
+export type StyleStats = {
+  AvgWordsUser: number
+  AvgWordsAssistant: number
+  UniqueWordsUser: number
+  UniqueWordsAssistant: number
+  TopWordsUser: WordCount[]
+  TopWordsAssistant: WordCount[]
+  AvgSentencesUser: number
+  AvgSentencesAssistant: number
+}
+export type ErrorSession = {
+  session: Session
+  error_rate: number
+  hits: number
+  total: number
+}
+export type TimeCostPoint = {
+  hour: number
+  cost_usd: number
+  model: string
+  project_dir: string
+}
+export type BehaviorAdvanced = {
+  bigrams: Bigram[]
+  trigrams: Trigram[]
+  co_occurrences: CoOccur[]
+  flow: FlowSummary
+  style: StyleStats
+  high_error_sessions: ErrorSession[]
+  time_cost_points: TimeCostPoint[]
+}

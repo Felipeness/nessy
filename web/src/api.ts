@@ -1,5 +1,6 @@
 import type {
   Behavioral,
+  BehaviorAdvanced,
   Costs,
   Message,
   ReindexStats,
@@ -30,6 +31,7 @@ export const api = {
     get<Message[]>(`/api/sessions/${id}/messages?n=${n}`),
   stats: () => get<Stats>('/api/stats'),
   behavioral: () => get<Behavioral>('/api/stats/behavioral'),
+  behaviorAdvanced: () => get<BehaviorAdvanced>('/api/behavior/advanced'),
   costs: () => get<Costs>('/api/costs'),
   timeline: (from?: string, to?: string) => {
     const q = new URLSearchParams()
