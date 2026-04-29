@@ -7,10 +7,15 @@ import (
 )
 
 const (
-	barFilled  = '█'
-	barEmpty   = '░'
-	heatChars  = " ·▁▂▃▄▅▆▇█"
-	sparkChars = "▁▂▃▄▅▆▇█"
+	barFilled = '█'
+	barEmpty  = '░'
+)
+
+// Runas multi-byte precisam ser slice de runes — não dá pra indexar uma string
+// UTF-8 por byte e esperar o caractere certo (cada bloco aqui ocupa 3 bytes).
+var (
+	heatRunes  = []rune(" ·▁▂▃▄▅▆▇█")
+	sparkRunes = []rune("▁▂▃▄▅▆▇█")
 )
 
 // BarChart renderiza uma barra horizontal estilo "label   ████░░  42 (61%)".
@@ -65,8 +70,8 @@ func Sparkline(values []int) string {
 	}
 	var b strings.Builder
 	for _, v := range values {
-		idx := v * (len(sparkChars) - 1) / max
-		b.WriteByte(sparkChars[idx])
+		idx := v * (len(sparkRunes) - 1) / max
+		b.WriteRune(sparkRunes[idx])
 	}
 	return b.String()
 }
@@ -87,8 +92,8 @@ func Heatmap(grid [][]int) string {
 	var b strings.Builder
 	for _, row := range grid {
 		for _, v := range row {
-			idx := v * (len(heatChars) - 1) / max
-			b.WriteByte(heatChars[idx])
+			idx := v * (len(heatRunes) - 1) / max
+			b.WriteRune(heatRunes[idx])
 			b.WriteByte(' ')
 		}
 		b.WriteByte('\n')
