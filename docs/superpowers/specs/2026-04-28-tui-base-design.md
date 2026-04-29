@@ -22,14 +22,14 @@ Esta spec define o **escopo, comportamento e estrutura** da Fase 2. Análises co
 
 ## Decomposição em fases
 
-| Fase | Sub-projeto | Status |
-|---|---|---|
-| 1 | Indexer Go + CLI `list/show/fzf` | ✅ Entregue |
+| Fase  | Sub-projeto                                                          | Status       |
+| ----- | -------------------------------------------------------------------- | ------------ |
+| 1     | Indexer Go + CLI `list/show/fzf`                                     | ✅ Entregue  |
 | **2** | **TUI base** com tabs Search/Recent/Stats + métricas determinísticas | ⏳ Esta spec |
-| 3 | Web UI + dashboard temporal | Backlog |
-| 4 | Behavioral analytics via heurísticas (regex/stats) | Backlog |
-| 5 | AI-powered profiling (LLM local + embeddings) | Backlog |
-| 6 | Code mining (extração + análise de snippets gerados) | Backlog |
+| 3     | Web UI + dashboard temporal                                          | Backlog      |
+| 4     | Behavioral analytics via heurísticas (regex/stats)                   | Backlog      |
+| 5     | AI-powered profiling (LLM local + embeddings)                        | Backlog      |
+| 6     | Code mining (extração + análise de snippets gerados)                 | Backlog      |
 
 Cada fase = 1 spec + 1 plan + 1 ciclo de implementação. Esta spec cobre **somente a Fase 2**.
 
@@ -55,14 +55,14 @@ Cada fase = 1 spec + 1 plan + 1 ciclo de implementação. Esta spec cobre **some
 
 ## Tech stack
 
-| Camada | Tech |
-|---|---|
-| Linguagem | Go 1.26 (mantém consistência com Fase 1) |
-| TUI framework | [Bubble Tea](https://github.com/charmbracelet/bubbletea) |
-| Styling | [Lipgloss](https://github.com/charmbracelet/lipgloss) |
-| Componentes | [Bubbles](https://github.com/charmbracelet/bubbles) (table, textinput, viewport, help) |
-| DB | SQLite via `modernc.org/sqlite` (CGO-free) com FTS5 ativado |
-| Pricing config | TOML via `github.com/BurntSushi/toml` |
+| Camada         | Tech                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------- |
+| Linguagem      | Go 1.26 (mantém consistência com Fase 1)                                               |
+| TUI framework  | [Bubble Tea](https://github.com/charmbracelet/bubbletea)                               |
+| Styling        | [Lipgloss](https://github.com/charmbracelet/lipgloss)                                  |
+| Componentes    | [Bubbles](https://github.com/charmbracelet/bubbles) (table, textinput, viewport, help) |
+| DB             | SQLite via `modernc.org/sqlite` (CGO-free) com FTS5 ativado                            |
+| Pricing config | TOML via `github.com/BurntSushi/toml`                                                  |
 
 Justificativa Bubble Tea: ecossistema Charm é o mais maduro pra TUI Go em 2026, suporta layout adaptativo e cobre todos os componentes necessários. `modernc.org/sqlite` evita CGO e mantém o binário portátil (single-binary cross-compile).
 
@@ -354,17 +354,17 @@ Todas têm binários arm64 nativos e zero CGO (com `modernc.org/sqlite` em vez d
 
 ## Riscos & edge cases
 
-| Risco | Probabilidade | Mitigação |
-|---|---|---|
-| JSONL com linha JSON inválida | Alta (já visto em produção) | `Skip + continue` — Fase 1 já faz isso |
-| `cwd` apontando pra pasta deletada | Média | Mostra session greyed-out + erro ao Enter |
-| Modelo novo (ex: sonnet-4-7) sem entry no pricing | Alta (Anthropic libera modelo novo) | Custo `?` + warning não-bloqueante; usuário edita TOML manual |
-| Terminal redimensionado em runtime | Alta | Bubble Tea trata nativamente (`tea.WindowSizeMsg`); refluí o layout |
-| 1000+ sessions (escala futura) | Média (em 6 meses) | SQLite + FTS5 cobrem; UI vira viewport scrollable |
-| FTS5 não disponível na build do `modernc.org/sqlite` | Baixa | Fallback pra `LIKE %query%` (mais lento mas funciona); detectado em runtime via `PRAGMA compile_options` |
-| Refresh durante load → race | Média | Usar `tea.Cmd` pra reindex async; lock global no DB |
-| BRL rate desatualizado | Alta | Doc explícita que é manual; não tentar puxar de API externa nesta fase |
-| Subagents jsonl (do task tool) | N/A — já filtrados na Fase 1 | Mantém filtro `subagents/` |
+| Risco                                                | Probabilidade                       | Mitigação                                                                                                |
+| ---------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| JSONL com linha JSON inválida                        | Alta (já visto em produção)         | `Skip + continue` — Fase 1 já faz isso                                                                   |
+| `cwd` apontando pra pasta deletada                   | Média                               | Mostra session greyed-out + erro ao Enter                                                                |
+| Modelo novo (ex: sonnet-4-7) sem entry no pricing    | Alta (Anthropic libera modelo novo) | Custo `?` + warning não-bloqueante; usuário edita TOML manual                                            |
+| Terminal redimensionado em runtime                   | Alta                                | Bubble Tea trata nativamente (`tea.WindowSizeMsg`); refluí o layout                                      |
+| 1000+ sessions (escala futura)                       | Média (em 6 meses)                  | SQLite + FTS5 cobrem; UI vira viewport scrollable                                                        |
+| FTS5 não disponível na build do `modernc.org/sqlite` | Baixa                               | Fallback pra `LIKE %query%` (mais lento mas funciona); detectado em runtime via `PRAGMA compile_options` |
+| Refresh durante load → race                          | Média                               | Usar `tea.Cmd` pra reindex async; lock global no DB                                                      |
+| BRL rate desatualizado                               | Alta                                | Doc explícita que é manual; não tentar puxar de API externa nesta fase                                   |
+| Subagents jsonl (do task tool)                       | N/A — já filtrados na Fase 1        | Mantém filtro `subagents/`                                                                               |
 
 ## Critérios de aceitação
 
