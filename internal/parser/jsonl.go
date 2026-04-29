@@ -40,6 +40,49 @@ type rawMessage struct {
 	Usage   *rawUsage       `json:"usage,omitempty"`
 }
 
+// Message é uma user/assistant message individual extraída do JSONL.
+type Message struct {
+	SessionID string
+	Role      string
+	Content   string
+}
+
+// ParseMessages reads the JSONL and returns flat user/assistant messages
+// for FTS indexing. Tool result blocks are excluded.
+func ParseMessages(path string) ([]Message, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []Message
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type != "user" && ev.Type != "assistant" {
+			continue
+		}
+		if ev.Message == nil {
+			continue
+		}
+		text := extractText(ev.Message.Content)
+		if text == "" {
+			continue
+		}
+		out = append(out, Message{
+			SessionID: ev.SessionID,
+			Role:      ev.Type,
+			Content:   text,
+		})
+	}
+	return out, scanner.Err()
+}
+
 // rawUsage matches the shape of message.usage emitted by Claude Code.
 type rawUsage struct {
 	InputTokens              int64 `json:"input_tokens"`
