@@ -26,8 +26,12 @@ type Pricing struct {
 
 // Cost expressa o custo de uma session.
 type Cost struct {
-	USD float64
-	BRL float64 // 0 se BRLRate não estiver setado
+	USD              float64
+	BRL              float64 // 0 se BRLRate não estiver setado
+	InputUSD         float64
+	OutputUSD        float64
+	CacheCreationUSD float64
+	CacheReadUSD     float64
 }
 
 // Load reads a pricing TOML file and indexes models by name.
@@ -46,20 +50,27 @@ func Load(path string) (*Pricing, error) {
 	return &p, nil
 }
 
-// Cost returns the USD (and optionally BRL) cost of the given session based on
-// its model and token counts. Returns ok=false if the model is unknown.
+// Cost returns the USD (and optionally BRL) cost of the given session, broken
+// down per token category. Returns ok=false if the model is unknown.
 func (p *Pricing) Cost(s *model.Session) (Cost, bool) {
 	m, ok := p.Models[s.Model]
 	if !ok {
 		return Cost{}, false
 	}
-	usd := (float64(s.InputTokens)*m.InputPerMTok +
-		float64(s.OutputTokens)*m.OutputPerMTok +
-		float64(s.CacheCreationTokens)*m.CacheCreationPerMTok +
-		float64(s.CacheReadTokens)*m.CacheReadPerMTok) / 1_000_000.0
-	out := Cost{USD: usd}
-	if p.BRLRate > 0 {
-		out.BRL = usd * p.BRLRate
+	in := float64(s.InputTokens) * m.InputPerMTok / 1_000_000.0
+	out := float64(s.OutputTokens) * m.OutputPerMTok / 1_000_000.0
+	cc := float64(s.CacheCreationTokens) * m.CacheCreationPerMTok / 1_000_000.0
+	cr := float64(s.CacheReadTokens) * m.CacheReadPerMTok / 1_000_000.0
+	total := in + out + cc + cr
+	c := Cost{
+		USD:              total,
+		InputUSD:         in,
+		OutputUSD:        out,
+		CacheCreationUSD: cc,
+		CacheReadUSD:     cr,
 	}
-	return out, true
+	if p.BRLRate > 0 {
+		c.BRL = total * p.BRLRate
+	}
+	return c, true
 }

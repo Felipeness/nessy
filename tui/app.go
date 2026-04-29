@@ -39,10 +39,11 @@ type Model struct {
 	height      int
 	activeTab   tabID
 	status      string
-	statusUntil time.Time // se != zero, status revert pra default depois disso
+	statusUntil time.Time
 	showHelp    bool
 	refreshing  bool
 	spin        spinner.Model
+	detailCtx   *detailContext
 	recent      recentView
 	search      searchView
 	stats       statsView
@@ -60,6 +61,7 @@ func New(db *index.DB, p *pricing.Pricing) Model {
 		activeTab: tabRecent,
 		status:    "ready",
 		spin:      sp,
+		detailCtx: newDetailContext(sessions, p),
 		recent:    newRecentView(sessions, p),
 		search:    newSearchView(db, p, sessions),
 		stats:     newStatsView(sessions, p),
@@ -71,6 +73,7 @@ func (m Model) Init() tea.Cmd { return m.spin.Tick }
 
 func (m *Model) reload() {
 	sessions, _ := m.db.ListSessions()
+	m.detailCtx = newDetailContext(sessions, m.pricing)
 	m.recent = newRecentView(sessions, m.pricing)
 	m.search = newSearchView(m.db, m.pricing, sessions)
 	m.stats = newStatsView(sessions, m.pricing)
@@ -281,17 +284,17 @@ func (m Model) renderWide(h int) string {
 	case tabSearch:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.search.View(leftW, h)),
-			right.Render(renderDetail(m.search.selected(), m.pricing)),
+			right.Render(m.detailCtx.renderDetail(m.search.selected())),
 		)
 	case tabRecent:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.recent.View(leftW, h)),
-			right.Render(renderDetail(m.recent.selected(), m.pricing)),
+			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
 		)
 	case tabStats:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.stats.renderGlobal(leftW)),
-			right.Render(renderDetail(m.recent.selected(), m.pricing)),
+			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
 		)
 	}
 	return ""
@@ -305,7 +308,7 @@ func (m Model) renderNarrow(h int) string {
 		return m.recent.View(m.width, h)
 	case tabStats:
 		if m.stats.showLocal {
-			return renderDetail(m.recent.selected(), m.pricing)
+			return m.detailCtx.renderDetail(m.recent.selected())
 		}
 		return m.stats.renderGlobal(m.width)
 	}

@@ -47,6 +47,25 @@ type Message struct {
 	Content   string
 }
 
+// LastUserMessages re-parseia o JSONL e retorna as últimas N user messages
+// (ordem cronológica crescente). Útil pra preview no detail panel.
+func LastUserMessages(path string, n int) ([]Message, error) {
+	all, err := ParseMessages(path)
+	if err != nil {
+		return nil, err
+	}
+	var users []Message
+	for _, m := range all {
+		if m.Role == "user" {
+			users = append(users, m)
+		}
+	}
+	if len(users) > n {
+		users = users[len(users)-n:]
+	}
+	return users, nil
+}
+
 // ParseMessages reads the JSONL and returns flat user/assistant messages
 // for FTS indexing. Tool result blocks are excluded.
 func ParseMessages(path string) ([]Message, error) {
