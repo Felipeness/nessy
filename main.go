@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +19,7 @@ import (
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
 	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/claude-history/internal/server"
 	"github.com/felipeness/claude-history/tui"
 )
 
@@ -27,7 +30,7 @@ USAGE:
   claude-history fzf                    abre fzf interativo, Enter retoma a session
   claude-history show <session-id>      mostra detalhes de uma session
   claude-history tui                    TUI Bubble Tea com tabs Search/Recent/Stats
-  claude-history serve [--port N]       sobe API HTTP + web UI (Fase 3)
+  claude-history serve [--port N]       sobe Web UI local em http://localhost:5555
 
 EXAMPLES:
   claude-history list
@@ -50,6 +53,8 @@ func main() {
 		cmdShow(os.Args[2:])
 	case "tui":
 		cmdTui(os.Args[2:])
+	case "serve":
+		cmdServe(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -313,6 +318,86 @@ func cmdTui(_ []string) {
 	if _, err := prog.Run(); err != nil {
 		fatal(err)
 	}
+}
+
+func cmdServe(args []string) {
+	port := 5555
+	listenFlag := ""
+	openBrowser := true
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port", "-p":
+			if i+1 < len(args) {
+				p, err := strconv.Atoi(args[i+1])
+				if err == nil {
+					port = p
+				}
+				i++
+			}
+		case "--listen":
+			if i+1 < len(args) {
+				listenFlag = args[i+1]
+				i++
+			}
+		case "--no-open":
+			openBrowser = false
+		}
+	}
+	listen := listenFlag
+	if listen == "" {
+		listen = fmt.Sprintf("127.0.0.1:%d", port)
+	}
+	// LAN warning
+	if !strings.HasPrefix(listen, "127.") && !strings.HasPrefix(listen, "localhost") {
+		fmt.Fprintf(os.Stderr, "⚠ %s expõe na rede. Qualquer um na sua LAN poderá ler suas conversas.\nContinuar? [y/N] ", listen)
+		var resp string
+		fmt.Scanln(&resp)
+		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+			fmt.Fprintln(os.Stderr, "abortado")
+			return
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	cacheDir := filepath.Join(home, ".claude-history")
+	_ = os.MkdirAll(cacheDir, 0755)
+	dbPath := filepath.Join(cacheDir, "index.db")
+	pricingPath := filepath.Join(cacheDir, "pricing.toml")
+
+	if _, err := os.Stat(pricingPath); errors.Is(err, os.ErrNotExist) {
+		_ = os.WriteFile(pricingPath, []byte(defaultPricingTOML), 0644)
+	}
+
+	db, err := index.Open(dbPath)
+	if err != nil {
+		fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Reindex(filepath.Join(home, ".claude", "projects")); err != nil {
+		fmt.Fprintln(os.Stderr, "reindex error:", err)
+	}
+
+	p, err := pricing.Load(pricingPath)
+	if err != nil {
+		fatal(err)
+	}
+
+	srv := &server.Server{
+		DB:      db,
+		Pricing: p,
+		Hub:     server.NewHub(),
+		Static:  staticHandler(),
+	}
+	if err := server.Run(srv, listen, openBrowser); err != nil {
+		fatal(err)
+	}
+}
+
+// staticHandler retorna o handler do frontend embeddado, ou nil se ainda não
+// existe (dev mode — vite dev é proxy externo).
+func staticHandler() http.Handler {
+	return webStatic // declared in embed.go (build tag dependent)
 }
 
 func loadSorted() ([]*model.Session, error) {
