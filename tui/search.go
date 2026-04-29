@@ -2,11 +2,13 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/claude-history/internal/pricing"
 )
 
 type searchMode int
@@ -18,6 +20,7 @@ const (
 
 type searchView struct {
 	db       *index.DB
+	pricing  *pricing.Pricing
 	input    textinput.Model
 	mode     searchMode
 	all      []*model.Session
@@ -26,11 +29,11 @@ type searchView struct {
 	cursor   int
 }
 
-func newSearchView(db *index.DB, all []*model.Session) searchView {
+func newSearchView(db *index.DB, p *pricing.Pricing, all []*model.Session) searchView {
 	ti := textinput.New()
 	ti.Placeholder = "Filtrar por cwd, branch ou primeira msg…  (use :body <q> pra full-text)"
 	ti.Focus()
-	return searchView{db: db, input: ti, all: all, results: all, snippets: map[string]string{}}
+	return searchView{db: db, pricing: p, input: ti, all: all, results: all, snippets: map[string]string{}}
 }
 
 func (v *searchView) Filter(query string) {
@@ -108,19 +111,20 @@ func (v searchView) View(width, height int) string {
 	header := lipgloss.NewStyle().Foreground(colorMuted).Render(
 		"mode: " + map[searchMode]string{modeMetadata: "metadata", modeFullText: "full-text"}[v.mode],
 	)
+	now := time.Now()
 	var rows []string
 	for i, s := range v.results {
 		marker := "  "
 		if i == v.cursor {
 			marker = "▶ "
 		}
-		extra := ""
+		row := formatDenseRow(s, v.pricing, now, width-3)
 		if v.mode == modeFullText {
 			if sn, ok := v.snippets[s.SessionID]; ok {
-				extra = " — " + sn
+				row += "\n     " + lipgloss.NewStyle().Foreground(colorMuted).Render(sn)
 			}
 		}
-		rows = append(rows, marker+s.ProjectDir+"  "+s.FirstUserMsg+extra)
+		rows = append(rows, marker+row)
 	}
 	body := strings.Join(rows, "\n")
 	return lipgloss.JoinVertical(lipgloss.Left, v.input.View(), header, body)

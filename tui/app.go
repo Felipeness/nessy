@@ -49,8 +49,8 @@ func New(db *index.DB, p *pricing.Pricing) Model {
 		pricing:   p,
 		activeTab: tabRecent,
 		status:    "ready",
-		recent:    newRecentView(sessions),
-		search:    newSearchView(db, sessions),
+		recent:    newRecentView(sessions, p),
+		search:    newSearchView(db, p, sessions),
 		stats:     newStatsView(sessions, p),
 	}
 }
@@ -60,8 +60,8 @@ func (m Model) Init() tea.Cmd { return nil }
 
 func (m *Model) reload() {
 	sessions, _ := m.db.ListSessions()
-	m.recent = newRecentView(sessions)
-	m.search = newSearchView(m.db, sessions)
+	m.recent = newRecentView(sessions, m.pricing)
+	m.search = newSearchView(m.db, m.pricing, sessions)
 	m.stats = newStatsView(sessions, m.pricing)
 }
 

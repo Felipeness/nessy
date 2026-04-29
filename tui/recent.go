@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/claude-history/internal/pricing"
 )
 
 const (
@@ -17,15 +18,16 @@ const (
 
 type recentView struct {
 	sessions       []*model.Session
+	pricing        *pricing.Pricing
 	cursor         int
 	groupByProject bool
 }
 
-func newRecentView(sessions []*model.Session) recentView {
+func newRecentView(sessions []*model.Session, p *pricing.Pricing) recentView {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].EndTime.After(sessions[j].EndTime)
 	})
-	return recentView{sessions: sessions}
+	return recentView{sessions: sessions, pricing: p}
 }
 
 func (v recentView) selected() *model.Session {
@@ -59,7 +61,7 @@ func (v recentView) viewByTime(width int) string {
 		if i == v.cursor {
 			marker = "▶"
 		}
-		fmt.Fprintf(&b, "%s %s\n", marker, formatRow(s, now, width-2))
+		fmt.Fprintf(&b, "%s %s\n", marker, formatDenseRow(s, v.pricing, now, width-2))
 	}
 	return b.String()
 }
@@ -85,30 +87,11 @@ func (v recentView) viewByProject(width int) string {
 	for _, e := range flat {
 		fmt.Fprintf(&b, "%s (%d sessions)\n", e.dir, len(e.list))
 		for _, s := range e.list {
-			fmt.Fprintf(&b, "  %s\n", formatRow(s, now, width-4))
+			fmt.Fprintf(&b, "  %s\n", formatDenseRow(s, v.pricing, now, width-4))
 		}
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-func formatRow(s *model.Session, now time.Time, width int) string {
-	icon := activityIcon(now.Sub(s.EndTime))
-	dir := s.ProjectDir
-	if len(dir) > 30 {
-		dir = "…" + dir[len(dir)-29:]
-	}
-	preview := s.FirstUserMsg
-	if len(preview) > 50 {
-		preview = preview[:49] + "…"
-	}
-	return fmt.Sprintf("%s %s  %-30s  %d msg  %s",
-		icon,
-		s.EndTime.Local().Format("15:04"),
-		dir,
-		s.MessageCount,
-		preview,
-	)
 }
 
 func activityIcon(since time.Duration) string {
