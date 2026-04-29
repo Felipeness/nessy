@@ -155,6 +155,52 @@ func (v statsView) renderGlobal(width int) string {
 	}
 	b.WriteByte('\n')
 
+	// F1 — Top palavras
+	fmt.Fprintln(&b, header.Render("🗣️ Suas palavras mais usadas"))
+	words := stats.TopWords(v.sessions, 15)
+	for i, w := range words {
+		if i >= 15 {
+			break
+		}
+		fmt.Fprintf(&b, "  %-18s %d\n", w.Word, w.Count)
+		if i == 4 {
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteByte('\n')
+
+	// F2 — Padrões de retrabalho
+	rate, hits, totalMsgs := stats.ErrorRate(v.sessions)
+	rateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+	rateLabel := "saudável"
+	switch {
+	case rate > 0.15:
+		rateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		rateLabel = "alto"
+	case rate > 0.05:
+		rateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+		rateLabel = "moderado"
+	}
+	fmt.Fprintln(&b, header.Render("🔁 Sinais de retrabalho"))
+	fmt.Fprintf(&b, "%d msgs (%.0f%% de %d total) — %s\n\n",
+		hits, rate*100, totalMsgs, rateStyle.Render(rateLabel))
+
+	// F3 — Prefixos comuns
+	fmt.Fprintln(&b, header.Render("✏️ Como você inicia mensagens"))
+	prefs := stats.TopPrefixes(v.sessions, 8)
+	for _, p := range prefs {
+		fmt.Fprintf(&b, "  %-15s %d\n", p.Word, p.Count)
+	}
+	b.WriteByte('\n')
+
+	// F4 — Horário de pico
+	fmt.Fprintln(&b, header.Render("⏰ Quando você usa Claude Code"))
+	bins := stats.PeakHour(v.sessions)
+	binsSlice := bins[:]
+	fmt.Fprintf(&b, "%s\n", Sparkline(binsSlice))
+	fmt.Fprintln(&b, "0h──────6h──────12h──────18h──────24h")
+	b.WriteByte('\n')
+
 	// Top tools
 	fmt.Fprintln(&b, header.Render("🔧 Top tools globais"))
 	var toolPairs []kv
