@@ -156,9 +156,14 @@ func (v threadsView) View(width, height int) string {
 		return v.renderTree(width)
 	case threadViewCards:
 		return v.renderCards(width)
-	case threadViewMiller, threadViewGraph, threadViewTimeline, threadViewGalaxy:
-		// Placeholders pras outras views — implementar nas próximas fases
-		return v.renderTodo(width, v.view.String())
+	case threadViewMiller:
+		return v.renderMiller(width)
+	case threadViewGraph:
+		return v.renderGraph(width)
+	case threadViewTimeline:
+		return v.renderTimeline(width)
+	case threadViewGalaxy:
+		return v.renderGalaxy(width, 24)
 	}
 	return ""
 }
@@ -317,18 +322,178 @@ func (v threadsView) titleFor(s *model.Session) string {
 }
 
 // =============================================================================
-// View 2 — Cards (placeholder, próxima fase)
+// View 2 — Cards (Pinterest-style)
 // =============================================================================
 
 func (v threadsView) renderCards(width int) string {
-	return v.renderTodo(width, "cards")
+	if len(v.threads) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"(nenhuma thread)")
+	}
+
+	// Cards 1 por linha pra widths < 80, 2 por linha pra wide.
+	cols := 1
+	cardW := width - 2
+	if width >= 80 {
+		cols = 2
+		cardW = (width - 4) / 2
+	}
+
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	border := lipgloss.NewStyle().Foreground(colorBorder)
+	focused := lipgloss.NewStyle().Foreground(colorAccent)
+
+	var b strings.Builder
+	var rowCards []string
+	for ti, t := range v.threads {
+		rowCards = append(rowCards, v.renderSingleCard(t, cardW, ti))
+		if len(rowCards) == cols {
+			b.WriteString(joinCards(rowCards) + "\n")
+			rowCards = rowCards[:0]
+		}
+	}
+	if len(rowCards) > 0 {
+		b.WriteString(joinCards(rowCards) + "\n")
+	}
+	_ = muted
+	_ = border
+	_ = focused
+	return b.String()
 }
 
-func (v threadsView) renderTodo(width int, name string) string {
-	return lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Padding(2, 4).
-		Render(fmt.Sprintf("(%s view — próxima fase. Aperte 'v' pra voltar pro tree.)", name))
+// renderSingleCard renderiza UMA thread como card multi-line.
+func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string {
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	subdued := lipgloss.NewStyle().Foreground(colorMuted)
+	bord := colorBorder
+	bordStyle := lipgloss.NewStyle().Foreground(bord)
+
+	// Detect cursor — se algum row do flat dessa thread está selecionado
+	isCursor := false
+	for i, row := range v.flat {
+		if row.threadIdx == threadIdx && i == v.cursor {
+			isCursor = true
+			break
+		}
+	}
+	if isCursor {
+		bord = colorAccent
+		bordStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	}
+
+	var lines []string
+
+	// Top border
+	lines = append(lines, bordStyle.Render("╭"+strings.Repeat("─", w-2)+"╮"))
+
+	// Project line
+	short := shortPath(t.ProjectDir, mustHomeTUI())
+	if len(short) > w-6 {
+		short = "…" + short[len(short)-(w-7):]
+	}
+	projLine := bordStyle.Render("│ ") +
+		muted.Render("📁 "+short) +
+		strings.Repeat(" ", maxInt(0, w-2-3-len(short)-1)) +
+		bordStyle.Render("│")
+	lines = append(lines, projLine)
+
+	// Branch pill line
+	branch := t.Branch
+	if branch == "" {
+		branch = "(no branch)"
+	}
+	pill := branchPill(branch)
+	pillW := lipgloss.Width(pill)
+	branchLine := bordStyle.Render("│ ") +
+		pill +
+		strings.Repeat(" ", maxInt(0, w-2-pillW-1)) +
+		bordStyle.Render("│")
+	lines = append(lines, branchLine)
+
+	// Stats line: ●●●○○ 5 sessions · $5.20 · 2h15m
+	dotsRendered := renderSessionDots(t.Sessions)
+	statsTxt := fmt.Sprintf(" %d sess · %s · %s",
+		len(t.Sessions),
+		fmtDuration(t.TotalDur),
+		fmt.Sprintf("$%.2f", t.TotalCost))
+	statsLine := bordStyle.Render("│ ") +
+		dotsRendered +
+		muted.Render(statsTxt) +
+		strings.Repeat(" ", maxInt(0, w-2-len(t.Sessions)-len(statsTxt)-1)) +
+		bordStyle.Render("│")
+	lines = append(lines, statsLine)
+
+	// Sparkline
+	spark := stats.SparklineFromThread(t)
+	sparkLine := bordStyle.Render("│ ") +
+		lipgloss.NewStyle().Foreground(colorAccent).Render(spark) +
+		strings.Repeat(" ", maxInt(0, w-2-len(spark)-1)) +
+		bordStyle.Render("│")
+	lines = append(lines, sparkLine)
+
+	// Latest session
+	if len(t.Sessions) > 0 {
+		latest := t.Sessions[len(t.Sessions)-1]
+		title := v.titleFor(latest.Session)
+		titleMax := w - 8
+		if titleMax > 0 && len(title) > titleMax {
+			title = title[:titleMax-1] + "…"
+		}
+		latestLine := bordStyle.Render("│ ") +
+			subdued.Render("↳ ") +
+			lipgloss.NewStyle().Foreground(colorFg).Render(title) +
+			strings.Repeat(" ", maxInt(0, w-2-2-len(title)-1)) +
+			bordStyle.Render("│")
+		lines = append(lines, latestLine)
+	}
+
+	// Bottom border
+	lines = append(lines, bordStyle.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+
+	return strings.Join(lines, "\n")
+}
+
+// renderSessionDots desenha ● ● ◉ ● ● — colored por kind.
+func renderSessionDots(sessions []*stats.ThreadSession) string {
+	var b strings.Builder
+	for _, s := range sessions {
+		b.WriteString(threadDot(s.Kind, "") + " ")
+	}
+	return b.String()
+}
+
+// joinCards cola N cards lado-a-lado linha-a-linha.
+func joinCards(cards []string) string {
+	if len(cards) == 1 {
+		return cards[0]
+	}
+	rows := make([][]string, len(cards))
+	maxLines := 0
+	for i, c := range cards {
+		rows[i] = strings.Split(c, "\n")
+		if len(rows[i]) > maxLines {
+			maxLines = len(rows[i])
+		}
+	}
+	var out []string
+	for i := 0; i < maxLines; i++ {
+		var line strings.Builder
+		for ci, r := range rows {
+			if i < len(r) {
+				line.WriteString(r[i])
+			} else {
+				// pad com espaços do tamanho do primeiro card
+				if len(r) > 0 {
+					line.WriteString(strings.Repeat(" ", lipgloss.Width(stripAnsi(r[0]))))
+				}
+			}
+			if ci < len(rows)-1 {
+				line.WriteString("  ")
+			}
+		}
+		out = append(out, line.String())
+	}
+	return strings.Join(out, "\n")
 }
 
 // humanDurShort: 30s, 5m, 2h, 1d.
@@ -355,4 +520,754 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// =============================================================================
+// View 4 — Miller columns (3-pane Finder-style)
+// Cursor navega no pane das sessions (rightmost). Alt+h/l mudaria o foco
+// pra outras panes mas pra v1 simplifico — projects/branches escolhidos
+// automaticamente baseado no que tem cursor selecionado.
+// =============================================================================
+
+func (v threadsView) renderMiller(width int) string {
+	if len(v.threads) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
+	}
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	bord := lipgloss.NewStyle().Foreground(colorBorder)
+	header := lipgloss.NewStyle().Foreground(colorMuted).Bold(true).Padding(0, 1)
+	sel := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+
+	// 3 cols: 22, 26, rest
+	colW := []int{22, 26, width - 22 - 26 - 4}
+	if colW[2] < 30 {
+		colW[2] = 30
+	}
+
+	// Determine selection from current cursor row
+	selProject, selBranch := "", ""
+	var selSession *model.Session
+	if v.cursor < len(v.flat) {
+		row := v.flat[v.cursor]
+		selProject = row.thread.ProjectDir
+		selBranch = row.thread.Branch
+		if row.session != nil {
+			selSession = row.session.Session
+		}
+	}
+
+	// Pane 1: projects
+	grouped := stats.GroupByProject(v.threads)
+	dirs := stats.SortedProjectDirs(grouped)
+	var p1 strings.Builder
+	p1.WriteString(header.Render("PROJECTS") + "\n")
+	for _, d := range dirs {
+		short := shortPath(d, mustHomeTUI())
+		short = truncRight(short, colW[0]-6)
+		count := 0
+		for _, t := range grouped[d] {
+			count += len(t.Sessions)
+		}
+		line := fmt.Sprintf(" %-*s %3d", colW[0]-6, short, count)
+		if d == selProject {
+			line = sel.Render("▶" + line)
+		} else {
+			line = " " + line
+		}
+		p1.WriteString(line + "\n")
+	}
+
+	// Pane 2: branches do projeto selecionado
+	var p2 strings.Builder
+	p2.WriteString(header.Render("BRANCHES") + "\n")
+	if branches, ok := grouped[selProject]; ok {
+		for _, t := range branches {
+			b := t.Branch
+			if b == "" {
+				b = "(no branch)"
+			}
+			b = truncRight(b, colW[1]-6)
+			line := fmt.Sprintf(" %-*s %3d", colW[1]-6, b, len(t.Sessions))
+			if t.Branch == selBranch {
+				line = sel.Render("▶" + line)
+			} else {
+				line = " " + line
+			}
+			p2.WriteString(line + "\n")
+		}
+	}
+
+	// Pane 3: sessions da branch selecionada
+	var p3 strings.Builder
+	p3.WriteString(header.Render("SESSIONS") + "\n")
+	for _, t := range v.threads {
+		if t.ProjectDir != selProject || t.Branch != selBranch {
+			continue
+		}
+		for _, s := range t.Sessions {
+			when := s.StartTime.Local().Format("Mon 15:04")
+			dur := fmtDuration(s.Duration())
+			cost := "?"
+			if v.pricing != nil {
+				if c, ok := v.pricing.Cost(s.Session); ok {
+					cost = fmt.Sprintf("$%.2f", c.USD)
+				}
+			}
+			marker := " "
+			line := fmt.Sprintf("%s %s · %s · %s · %s",
+				marker, when, dur, cost, threadDot(s.Kind, ""))
+			if selSession != nil && s.SessionID == selSession.SessionID {
+				line = sel.Render("▶ " + when + " · " + dur + " · " + cost + " ●")
+			}
+			p3.WriteString(line + "\n")
+		}
+	}
+
+	// Join 3 panes side-by-side
+	lines1 := strings.Split(p1.String(), "\n")
+	lines2 := strings.Split(p2.String(), "\n")
+	lines3 := strings.Split(p3.String(), "\n")
+	maxLines := len(lines1)
+	if len(lines2) > maxLines {
+		maxLines = len(lines2)
+	}
+	if len(lines3) > maxLines {
+		maxLines = len(lines3)
+	}
+
+	var out strings.Builder
+	for i := 0; i < maxLines; i++ {
+		l1, l2, l3 := "", "", ""
+		if i < len(lines1) {
+			l1 = lines1[i]
+		}
+		if i < len(lines2) {
+			l2 = lines2[i]
+		}
+		if i < len(lines3) {
+			l3 = lines3[i]
+		}
+		// Pad to colW
+		l1 = padRight(l1, colW[0])
+		l2 = padRight(l2, colW[1])
+		out.WriteString(l1 + bord.Render("│") + l2 + bord.Render("│") + l3 + "\n")
+	}
+
+	// Preview pane embaixo
+	out.WriteString(bord.Render(strings.Repeat("─", width)) + "\n")
+	if selSession != nil {
+		summary := v.titleFor(selSession)
+		summary = truncRight(summary, width-4)
+		out.WriteString(" " + lipgloss.NewStyle().Foreground(colorFg).Render(summary) + "\n")
+		// breadcrumb
+		crumb := breadcrumb(
+			shortPath(selProject, mustHomeTUI()),
+			selBranch,
+			selSession.SessionID[:8],
+		)
+		out.WriteString(" " + crumb + "\n")
+	} else {
+		out.WriteString(" " + muted.Render("(nenhuma session selecionada)") + "\n")
+	}
+
+	return out.String()
+}
+
+func padRight(s string, n int) string {
+	w := lipgloss.Width(stripAnsi(s))
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
+// =============================================================================
+// View 3 — Graph DAG (lazygit-style lanes paralelas)
+// =============================================================================
+
+func (v threadsView) renderGraph(width int) string {
+	if len(v.threads) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
+	}
+	// Cada thread vira uma "lane" com cor própria. Sessions de threads diferentes
+	// aparecem em ordem cronológica global, com símbolos `●` na lane correspondente
+	// e `│` nas outras lanes pra mostrar continuidade.
+
+	// Cores rotativas pra lanes
+	laneColors := []lipgloss.Color{
+		lipgloss.Color("#7dd3fc"), // cyan
+		lipgloss.Color("#f472b6"), // magenta
+		lipgloss.Color("#fbbf24"), // yellow
+		lipgloss.Color("#34d399"), // green
+		lipgloss.Color("#60a5fa"), // blue
+		lipgloss.Color("#f87171"), // red
+	}
+
+	// Assign lane index to each thread
+	threadLane := map[*stats.Thread]int{}
+	for i, t := range v.threads {
+		threadLane[t] = i % len(laneColors)
+	}
+
+	// Flat list of all sessions globally sorted by start time
+	type globalEntry struct {
+		t *stats.Thread
+		s *stats.ThreadSession
+	}
+	var all []globalEntry
+	for _, t := range v.threads {
+		for _, s := range t.Sessions {
+			all = append(all, globalEntry{t, s})
+		}
+	}
+	sortByTime := func(a, b globalEntry) bool {
+		return a.s.StartTime.Before(b.s.StartTime)
+	}
+	for i := 1; i < len(all); i++ {
+		for j := i; j > 0 && sortByTime(all[j], all[j-1]); j-- {
+			all[j], all[j-1] = all[j-1], all[j]
+		}
+	}
+
+	// Track which threads are "alive" at each row — first session = appears,
+	// last session = disappears, intermediate = `│`. Determine first/last:
+	firstIdx := map[*stats.Thread]int{}
+	lastIdx := map[*stats.Thread]int{}
+	for i, e := range all {
+		if _, ok := firstIdx[e.t]; !ok {
+			firstIdx[e.t] = i
+		}
+		lastIdx[e.t] = i
+	}
+
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	var b strings.Builder
+
+	for i, e := range all {
+		// Build the lane prefix
+		var lanePrefix strings.Builder
+		for j, t := range v.threads {
+			lane := threadLane[t]
+			col := laneColors[lane]
+			active := i >= firstIdx[t] && i <= lastIdx[t]
+			isThis := t == e.t
+			ch := " "
+			if isThis {
+				if e.s.Kind == "compact" {
+					ch = lipgloss.NewStyle().Foreground(colorWarn).Render("◉")
+				} else {
+					ch = lipgloss.NewStyle().Foreground(col).Render("●")
+				}
+			} else if active {
+				ch = lipgloss.NewStyle().Foreground(col).Render("│")
+			}
+			lanePrefix.WriteString(ch + "  ")
+			_ = j
+		}
+
+		// Right-side: branch pill + session info
+		isCursor := false
+		idx := v.flatRowIndex(e.t, e.s)
+		if idx == v.cursor {
+			isCursor = true
+		}
+		when := e.s.StartTime.Local().Format("Mon 15:04")
+		title := v.titleFor(e.s.Session)
+		title = truncRight(title, 50)
+		gapStr := ""
+		if e.s.Kind == "compact" {
+			gapStr = lipgloss.NewStyle().Foreground(colorWarn).Render(fmt.Sprintf(" ↻ %s", humanDurShort(e.s.GapFromPrev)))
+		}
+
+		row := lanePrefix.String() +
+			"  " + branchPill(e.t.Branch) +
+			"  " + muted.Render(when) +
+			"  " + lipgloss.NewStyle().Foreground(colorFg).Render(title) +
+			gapStr +
+			"  " + muted.Render("["+e.s.SessionID[:8]+"]")
+		if isCursor {
+			row = lipgloss.NewStyle().Background(lipgloss.Color("237")).Render(row)
+		}
+		b.WriteString(row + "\n")
+	}
+	return b.String()
+}
+
+// =============================================================================
+// View 5 — Timeline horizontal (eixo tempo)
+// Cada thread = linha horizontal, sessions = ● ao longo do eixo X (tempo).
+// =============================================================================
+
+func (v threadsView) renderTimeline(width int) string {
+	if len(v.threads) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
+	}
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+
+	// Find global time range
+	var minT, maxT time.Time
+	for _, t := range v.threads {
+		for _, s := range t.Sessions {
+			if minT.IsZero() || s.StartTime.Before(minT) {
+				minT = s.StartTime
+			}
+			if s.EndTime.After(maxT) {
+				maxT = s.EndTime
+			}
+		}
+	}
+	if minT.IsZero() || maxT.IsZero() {
+		return ""
+	}
+
+	// Label column: 22 chars
+	labelW := 22
+	timelineW := width - labelW - 2
+	if timelineW < 30 {
+		timelineW = 30
+	}
+	totalSpan := maxT.Sub(minT)
+	if totalSpan == 0 {
+		totalSpan = time.Hour
+	}
+
+	// Helper: time → column position
+	timeToX := func(t time.Time) int {
+		ratio := float64(t.Sub(minT)) / float64(totalSpan)
+		x := int(ratio * float64(timelineW-1))
+		if x < 0 {
+			x = 0
+		}
+		if x >= timelineW {
+			x = timelineW - 1
+		}
+		return x
+	}
+
+	var b strings.Builder
+
+	// Header com day labels
+	header := strings.Repeat(" ", labelW+2)
+	dayMarkers := []time.Time{}
+	day := time.Date(minT.Year(), minT.Month(), minT.Day(), 0, 0, 0, 0, minT.Location())
+	for ; !day.After(maxT); day = day.AddDate(0, 0, 1) {
+		dayMarkers = append(dayMarkers, day)
+	}
+	headerLine := []rune(strings.Repeat(" ", timelineW))
+	for _, d := range dayMarkers {
+		x := timeToX(d)
+		label := d.Format("Mon 02")
+		for i, r := range []rune(label) {
+			if x+i < len(headerLine) {
+				headerLine[x+i] = r
+			}
+		}
+	}
+	b.WriteString(header + muted.Render(string(headerLine)) + "\n")
+
+	// Separator
+	b.WriteString(strings.Repeat(" ", labelW+2) + muted.Render(strings.Repeat("─", timelineW)) + "\n")
+
+	// Thread rows
+	for _, t := range v.threads {
+		branch := t.Branch
+		if branch == "" {
+			branch = "(no branch)"
+		}
+		// Label
+		label := truncRight(branch, labelW-1)
+		b.WriteString(branchPill(label) + strings.Repeat(" ", maxInt(0, labelW-lipgloss.Width(branchPill(label)))) + "  ")
+
+		// Build line of sessions
+		line := []rune(strings.Repeat(" ", timelineW))
+		col := branchColor(t.Branch)
+		_ = col
+		for i, s := range t.Sessions {
+			x := timeToX(s.StartTime)
+			ch := '●'
+			if s.Kind == "compact" {
+				ch = '◉'
+			}
+			if x < len(line) {
+				line[x] = ch
+			}
+			// Connect to previous session in same thread with ─
+			if i > 0 {
+				prev := t.Sessions[i-1]
+				px := timeToX(prev.EndTime)
+				for j := px + 1; j < x; j++ {
+					if j < len(line) && line[j] == ' ' {
+						line[j] = '─'
+					}
+				}
+			}
+		}
+		// Color the line
+		colored := lipgloss.NewStyle().Foreground(branchColor(t.Branch)).Render(string(line))
+		b.WriteString(colored)
+
+		// Right-side: session count + cost
+		b.WriteString("  " + muted.Render(fmt.Sprintf("%d · $%.2f", len(t.Sessions), t.TotalCost)) + "\n")
+	}
+
+	// Footer separator
+	b.WriteString(strings.Repeat(" ", labelW+2) + muted.Render(strings.Repeat("─", timelineW)) + "\n")
+
+	// Hour markers (only if span < 7d)
+	if totalSpan < 7*24*time.Hour {
+		hourLine := []rune(strings.Repeat(" ", timelineW))
+		hr := time.Date(minT.Year(), minT.Month(), minT.Day(), minT.Hour(), 0, 0, 0, minT.Location())
+		for ; !hr.After(maxT); hr = hr.Add(6 * time.Hour) {
+			x := timeToX(hr)
+			label := hr.Format("15:04")
+			for i, r := range []rune(label) {
+				if x+i < len(hourLine) {
+					hourLine[x+i] = r
+				}
+			}
+		}
+		b.WriteString(strings.Repeat(" ", labelW+2) + muted.Render(string(hourLine)) + "\n")
+	}
+
+	return b.String()
+}
+
+// =============================================================================
+// View 6 — Galaxy (Braille canvas, drawille-inspired)
+// Force-directed layout simples + render em chars Braille (2x4 pixels/char).
+// =============================================================================
+
+// brailleCanvas inspirado em asciimoo/drawille.
+// Cada char Braille (U+2800..U+28FF) representa 2×4 pixels.
+// Bit positions: col 0 → bits 0,1,2,6 (rows 0,1,2,3) · col 1 → bits 3,4,5,7
+type brailleCanvas struct {
+	pixels [][]uint8 // pixel grid (h*4 rows × w*2 cols)
+	colors [][]lipgloss.Color
+	w, h   int // chars
+}
+
+func newBraille(w, h int) *brailleCanvas {
+	pixels := make([][]uint8, h*4)
+	for i := range pixels {
+		pixels[i] = make([]uint8, w*2)
+	}
+	colors := make([][]lipgloss.Color, h)
+	for i := range colors {
+		colors[i] = make([]lipgloss.Color, w)
+	}
+	return &brailleCanvas{pixels: pixels, colors: colors, w: w, h: h}
+}
+
+func (c *brailleCanvas) set(x, y int, color lipgloss.Color) {
+	if x < 0 || y < 0 || y >= c.h*4 || x >= c.w*2 {
+		return
+	}
+	c.pixels[y][x] = 1
+	cx, cy := x/2, y/4
+	c.colors[cy][cx] = color
+}
+
+func (c *brailleCanvas) circle(cx, cy, r int, color lipgloss.Color) {
+	for dy := -r; dy <= r; dy++ {
+		for dx := -r; dx <= r; dx++ {
+			if dx*dx+dy*dy <= r*r {
+				c.set(cx+dx, cy+dy, color)
+			}
+		}
+	}
+}
+
+func (c *brailleCanvas) line(x0, y0, x1, y1 int, color lipgloss.Color, dashed bool) {
+	dx, dy := abs(x1-x0), abs(y1-y0)
+	sx, sy := 1, 1
+	if x0 >= x1 {
+		sx = -1
+	}
+	if y0 >= y1 {
+		sy = -1
+	}
+	err := dx - dy
+	count := 0
+	for {
+		if !dashed || (count%4 < 2) {
+			c.set(x0, y0, color)
+		}
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 > -dy {
+			err -= dy
+			x0 += sx
+		}
+		if e2 < dx {
+			err += dx
+			y0 += sy
+		}
+		count++
+	}
+}
+
+func (c *brailleCanvas) render() string {
+	// Bit positions matching Unicode Braille:
+	// dots: 1=0x01 2=0x02 3=0x04 4=0x08 5=0x10 6=0x20 7=0x40 8=0x80
+	// layout in 2x4:
+	//   1 4
+	//   2 5
+	//   3 6
+	//   7 8
+	bits := [4][2]uint8{
+		{0x01, 0x08},
+		{0x02, 0x10},
+		{0x04, 0x20},
+		{0x40, 0x80},
+	}
+	var out strings.Builder
+	for cy := 0; cy < c.h; cy++ {
+		var line strings.Builder
+		var curColor lipgloss.Color = ""
+		var buf strings.Builder
+		flush := func() {
+			if buf.Len() == 0 {
+				return
+			}
+			if curColor != "" {
+				line.WriteString(lipgloss.NewStyle().Foreground(curColor).Render(buf.String()))
+			} else {
+				line.WriteString(buf.String())
+			}
+			buf.Reset()
+		}
+		for cx := 0; cx < c.w; cx++ {
+			var b uint8
+			for row := 0; row < 4; row++ {
+				for col := 0; col < 2; col++ {
+					px, py := cx*2+col, cy*4+row
+					if c.pixels[py][px] != 0 {
+						b |= bits[row][col]
+					}
+				}
+			}
+			ch := ' '
+			if b != 0 {
+				ch = rune(0x2800 + int(b))
+			}
+			col := c.colors[cy][cx]
+			if col != curColor {
+				flush()
+				curColor = col
+			}
+			buf.WriteRune(ch)
+		}
+		flush()
+		out.WriteString(line.String() + "\n")
+	}
+	return out.String()
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// renderGalaxy faz force-directed layout simples + braille canvas.
+func (v threadsView) renderGalaxy(width, height int) string {
+	if len(v.threads) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
+	}
+	if width < 60 || height < 12 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"galaxy view requer terminal ≥ 60×12 — use outra view")
+	}
+	canvas := newBraille(width, height-2) // leave room for legend
+	pixW, pixH := width*2, (height-2)*4
+
+	// Assign cores por projeto
+	projectColors := map[string]lipgloss.Color{}
+	colors := []lipgloss.Color{
+		"#7dd3fc", "#fbbf24", "#f472b6", "#34d399", "#60a5fa", "#a78bfa",
+	}
+	for i, t := range v.threads {
+		if _, ok := projectColors[t.ProjectDir]; !ok {
+			projectColors[t.ProjectDir] = colors[len(projectColors)%len(colors)]
+		}
+		_ = i
+	}
+
+	// Build flat node list (1 per session)
+	type node struct {
+		s     *stats.ThreadSession
+		t     *stats.Thread
+		x, y  float64
+		vx,vy float64
+		r     int
+	}
+	var nodes []*node
+	for _, t := range v.threads {
+		for _, s := range t.Sessions {
+			r := 2
+			cost := 0.0
+			if v.pricing != nil {
+				if c, ok := v.pricing.Cost(s.Session); ok {
+					cost = c.USD
+				}
+			}
+			if cost > 1 {
+				r = 3
+			}
+			if cost > 3 {
+				r = 4
+			}
+			if cost > 10 {
+				r = 5
+			}
+			nodes = append(nodes, &node{
+				s: s, t: t,
+				x: float64(pixW)/2 + float64(len(nodes)%5)*8 - 16,
+				y: float64(pixH)/2 + float64(len(nodes)/5)*8 - 16,
+				r: r,
+			})
+		}
+	}
+
+	// Edges: continuação dentro da mesma thread
+	type edge struct{ a, b *node; dashed bool }
+	var edges []edge
+	for _, t := range v.threads {
+		for i := 1; i < len(t.Sessions); i++ {
+			var pn, cn *node
+			for _, n := range nodes {
+				if n.s == t.Sessions[i-1] {
+					pn = n
+				}
+				if n.s == t.Sessions[i] {
+					cn = n
+				}
+			}
+			if pn != nil && cn != nil {
+				edges = append(edges, edge{pn, cn, t.Sessions[i].Kind == "compact"})
+			}
+		}
+	}
+
+	// Force-directed: 80 iterations
+	cx, cy := float64(pixW)/2, float64(pixH)/2
+	k := 12.0
+	for iter := 0; iter < 80; iter++ {
+		for _, a := range nodes {
+			a.vx, a.vy = 0, 0
+			// Repulsion between all
+			for _, b := range nodes {
+				if a == b {
+					continue
+				}
+				dx := a.x - b.x
+				dy := a.y - b.y
+				d := dx*dx + dy*dy
+				if d < 0.01 {
+					d = 0.01
+				}
+				dn := sqrt(d)
+				f := (k * k) / dn
+				a.vx += (dx / dn) * f
+				a.vy += (dy / dn) * f
+			}
+			// Cluster attraction within same project
+			for _, b := range nodes {
+				if a == b || a.t.ProjectDir != b.t.ProjectDir {
+					continue
+				}
+				dx := a.x - b.x
+				dy := a.y - b.y
+				d := sqrt(dx*dx + dy*dy)
+				if d < 0.01 {
+					continue
+				}
+				f := (d * d) / k * 0.5
+				a.vx -= (dx / d) * f
+				a.vy -= (dy / d) * f
+			}
+			// Pull to center
+			a.vx += (cx - a.x) * 0.005
+			a.vy += (cy - a.y) * 0.005
+		}
+		// Edge attraction
+		for _, e := range edges {
+			dx := e.a.x - e.b.x
+			dy := e.a.y - e.b.y
+			d := sqrt(dx*dx + dy*dy)
+			if d < 0.01 {
+				continue
+			}
+			f := (d * d) / k * 0.8
+			e.a.vx -= (dx / d) * f
+			e.a.vy -= (dy / d) * f
+			e.b.vx += (dx / d) * f
+			e.b.vy += (dy / d) * f
+		}
+		// Apply with damping + clamp
+		for _, n := range nodes {
+			speed := sqrt(n.vx*n.vx + n.vy*n.vy)
+			if speed < 0.01 {
+				speed = 0.01
+			}
+			cap := speed
+			if cap > 5 {
+				cap = 5
+			}
+			n.x += (n.vx / speed) * cap * 0.3
+			n.y += (n.vy / speed) * cap * 0.3
+			if n.x < 8 {
+				n.x = 8
+			}
+			if n.x > float64(pixW)-8 {
+				n.x = float64(pixW) - 8
+			}
+			if n.y < 4 {
+				n.y = 4
+			}
+			if n.y > float64(pixH)-4 {
+				n.y = float64(pixH) - 4
+			}
+		}
+	}
+
+	// Draw edges first
+	for _, e := range edges {
+		col := projectColors[e.a.t.ProjectDir]
+		canvas.line(int(e.a.x), int(e.a.y), int(e.b.x), int(e.b.y), col, e.dashed)
+	}
+	// Draw nodes
+	for _, n := range nodes {
+		col := projectColors[n.t.ProjectDir]
+		canvas.circle(int(n.x), int(n.y), n.r, col)
+	}
+
+	// Render + legend
+	out := canvas.render()
+
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	var legend strings.Builder
+	legend.WriteString(muted.Render("─── projetos ───") + "\n")
+	for proj, col := range projectColors {
+		short := shortPath(proj, mustHomeTUI())
+		short = truncRight(short, 40)
+		legend.WriteString("  " +
+			lipgloss.NewStyle().Foreground(col).Render("●") +
+			" " + lipgloss.NewStyle().Foreground(col).Render(short) + "\n")
+	}
+	return out + legend.String()
+}
+
+func sqrt(x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	z := x / 2
+	for i := 0; i < 8; i++ {
+		z = z - (z*z-x)/(2*z)
+	}
+	return z
 }
