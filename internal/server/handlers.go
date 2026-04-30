@@ -44,6 +44,7 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/ai/insights/generate", s.handleAIGenerateInsights)
 	mux.HandleFunc("/api/ai/profile", s.handleAIProfile)
 	mux.HandleFunc("/api/ai/profile/generate", s.handleAIGenerateProfile)
+	mux.HandleFunc("/api/statusline", s.handleStatusline)
 }
 
 func (s *Server) handleAIInsights(w http.ResponseWriter, r *http.Request) {
