@@ -505,7 +505,12 @@ Pressiona qualquer tecla pra fechar.`
 
 func isGlobalKey(k string) bool {
 	switch k {
-	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o":
+	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o",
+		"ctrl+e", "ctrl+t", "ctrl+f", "ctrl+b",
+		"up", "down", "home", "end", "pgup", "pgdown":
+		// Setas + Ctrl+* nunca são caracteres digitáveis, então sempre
+		// passam por cima da input pra navegar/atalhos globais funcionarem
+		// na tab Search.
 		return true
 	}
 	return false

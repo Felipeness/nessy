@@ -56,7 +56,7 @@ func newSearchView(db *index.DB, p *pricing.Pricing, all []*model.Session) searc
 		input:     ti,
 		all:       all,
 		results:   sessionsToHits(all),
-		expand:    true,
+		expand:    false, // default = agrupado (1 por session); ctrl+t expande
 	}
 }
 
@@ -407,13 +407,13 @@ func (v searchView) View(width, height int) string {
 		modeFullText: "body",
 		modeSemantic: "sim",
 	}
-	expandLabel := "all hits"
-	if !v.expand {
-		expandLabel = "agrupado"
+	expandLabel := "agrupado"
+	if v.expand {
+		expandLabel = "todos hits"
 	}
 	header := lipgloss.NewStyle().Foreground(colorMuted).Render(
 		"mode: " + modeNames[v.mode] + " · view: " + expandLabel + " · " +
-			strconv.Itoa(len(v.results)) + " results · [e] toggle agrupar",
+			strconv.Itoa(len(v.results)) + " results · [ctrl+t] expand · [↑↓] nav · [enter] retomar",
 	)
 	now := time.Now()
 	var rows []string

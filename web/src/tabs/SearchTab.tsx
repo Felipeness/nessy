@@ -22,8 +22,8 @@ export function SearchTab({ reindexCounter: _ }: Props) {
   const [selected, setSelected] = useState<Session | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  // groupBySession: false = mostra todos os hits (default); true = 1 por session
-  const [groupBySession, setGroupBySession] = useState(false)
+  // groupBySession: true = 1 por session (default); false = todos hits
+  const [groupBySession, setGroupBySession] = useState(true)
 
   const effective = useMemo(() => detectMode(query), [query])
 
