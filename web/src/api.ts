@@ -65,10 +65,10 @@ export const api = {
   search: (
     q: string,
     mode: 'hybrid' | 'metadata' | 'fts' | 'semantic' = 'hybrid',
-    expand = false,
+    group = false, // default = todos hits; group=true dedupa por session
   ) => {
     const params = new URLSearchParams({ q, mode })
-    if (expand) params.set('expand', 'true')
+    if (group) params.set('group', 'true')
     return get<SearchResponse>(`/api/search?${params}`)
   },
   refresh: () => post<ReindexStats>('/api/refresh'),

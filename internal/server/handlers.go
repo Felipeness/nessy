@@ -687,13 +687,20 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	modeFlag := r.URL.Query().Get("mode")
 
-	// :all força hybrid + expand, independente do mode flag — detect ANTES
-	// pra não ser engolido por outros prefixes ou o modeFlag do frontend.
-	expandFlag := r.URL.Query().Get("expand") == "true"
+	// Default = mostrar TODOS os hits (expand). Frontend pode mandar
+	// ?group=true pra agrupar/dedup por session. Mantemos :all como alias
+	// histórico (compatibilidade), mas não precisa mais.
+	expandFlag := r.URL.Query().Get("group") != "true"
 	if strings.HasPrefix(q, ":all ") {
 		q = strings.TrimSpace(q[5:])
 		expandFlag = true
 		modeFlag = "hybrid"
+	}
+	if r.URL.Query().Get("expand") == "true" {
+		expandFlag = true
+	}
+	if r.URL.Query().Get("expand") == "false" {
+		expandFlag = false
 	}
 
 	// Default agora é hybrid (metadata + FTS combinados), não só metadata.
