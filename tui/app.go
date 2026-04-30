@@ -437,11 +437,40 @@ func (m Model) renderTabBar() string {
 			parts = append(parts, tabInactiveStyle.Render(name))
 		}
 	}
-	return tabBarStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, parts...))
+	bar := tabBarStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, parts...))
+	// Hint contextual da tab ativa — atalhos relevantes só pra ela.
+	hint := lipgloss.NewStyle().Foreground(colorMuted).Padding(0, 1).Render(m.tabHint())
+	return lipgloss.JoinVertical(lipgloss.Left, bar, hint)
+}
+
+// tabHint devolve uma linha curta de atalhos relevantes à tab ativa.
+// Sempre inclui [?] help no fim pra lembrar onde achar a referência completa.
+func (m Model) tabHint() string {
+	const tail = "  ·  [?] ajuda  [r] refresh  [q] sair"
+	switch m.activeTab {
+	case tabSearch:
+		return "[ctrl+t] agrupar/all  [ctrl+y] fuzzy/exato  [↑↓] nav  [enter] retomar" + tail
+	case tabRecent:
+		return "[g] agrupar tempo/projeto  [↑↓] nav  [enter] retomar  [ctrl+e] export  [ctrl+o] abrir" + tail
+	case tabStats:
+		return "[s] toggle stats local (narrow)  [↑↓] nav" + tail
+	case tabCosts:
+		return "custos por dia/projeto/modelo  [↑↓] nav" + tail
+	case tabTimeline:
+		return "sessions agrupadas por dia  [↑↓] nav" + tail
+	case tabTools:
+		return "tools globais + drill-down  [↑↓] nav" + tail
+	case tabBehavior:
+		return "n-grams · co-occurrence · style stats" + tail
+	case tabAI:
+		return "[S] summaries  [C] clusters  [I] insights  [P] profile  [K] knowledge  [ctrl+k] all" + tail
+	}
+	return tail
 }
 
 func (m Model) renderBody() string {
-	bodyHeight := m.height - 2
+	// 3 linhas reservadas: tab bar (1) + hint contextual (1) + status bar (1).
+	bodyHeight := m.height - 3
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
@@ -534,19 +563,55 @@ func (m Model) renderStatusBar() string {
 }
 
 func helpText() string {
-	return `KEYBINDS
+	return `KEYBINDS — claude-history TUI
 
-Tab / Shift+Tab    trocar tab
-j / k              navegar lista
-Enter              retomar session
-/ ou f             search box
-:body <q>          full-text search
-g                  toggle agrupamento (Recent)
-s                  toggle stats local (narrow)
-r                  refresh
-?                  toggle help (esta tela)
-q ou Esc           quit
-Ctrl+O             abrir pasta no Finder
+NAVEGAÇÃO ENTRE TABS
+  Tab / Shift+Tab    próxima/anterior tab
+  1 2 3 4 5 6 7 8    pula direto pra Search/Recent/Stats/Costs/Timeline/Tools/Behavior/AI
+
+NAVEGAÇÃO NA LISTA (qualquer tab com lista)
+  ↑ ↓ ou j k         linha acima/abaixo
+  PgUp / PgDn        página (10 linhas)
+  Home / G ou End    topo / fim
+  Enter              retomar session selecionada (claude --resume)
+
+GLOBAL
+  r                  refresh (re-indexa novas sessions)
+  ?                  toggle help (esta tela)
+  q ou Esc           sair (salva state)
+  Ctrl+E             exportar session selecionada como JSON
+  Ctrl+O             abrir pasta da session no Finder
+
+TAB RECENT
+  g                  toggle agrupamento por tempo ↔ projeto
+
+TAB SEARCH
+  Digite pra filtrar — default = hybrid (metadata + body)
+  Prefixos:
+    :body <q>        só full-text via FTS5
+    :meta <q>        só metadata (path/branch/msg)
+    :sim <q>         semantic via embeddings (Ollama)
+    :all <q>         alias pra "todos hits"
+  Filtros (qualquer modo):
+    project:<x>      filtra por substring no path
+    branch:<x>       filtra por branch git
+    model:<x>        opus, sonnet, haiku
+    since:<dur>      7d, 24h, 30m
+    cost:>N / cost:<N
+  Toggles:
+    Ctrl+T           agrupar ↔ todos hits
+    Ctrl+Y           exato ↔ fuzzy (Porter stemmer)
+
+TAB STATS (terminal narrow < 120 cols)
+  s                  toggle stats global ↔ detail da session selecionada
+
+TAB AI (Ollama)
+  S                  enfileirar summaries de todas sessions
+  C                  recompute clusters K-means + LLM labels
+  I                  gerar insights (advisor)
+  P                  gerar profile (perfil pt-BR)
+  K                  gerar knowledge da session selecionada (Recent)
+  Ctrl+K             gerar knowledge de TODAS sessions (5-10 min)
 
 Pressiona qualquer tecla pra fechar.`
 }

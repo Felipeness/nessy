@@ -109,9 +109,7 @@ func (v aiView) View(width int, selected *model.Session) string {
 	if v.genStatus != "" {
 		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("  "+v.genStatus))
 	}
-	fmt.Fprintln(&b, muted.Render(
-		"  [S] summaries  [C] clusters  [I] insights  [P] profile  [K] knowledge  [ctrl+k] knowledge-all",
-	))
+	// hint dos atalhos agora é mostrada no tabHint (logo abaixo do tab bar)
 	if !reachable {
 		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(
 			"Ollama não responde. Rode `ollama serve` e baixe os modelos:"))
