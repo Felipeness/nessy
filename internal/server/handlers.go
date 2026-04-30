@@ -45,6 +45,9 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/ai/insights/generate", s.handleAIGenerateInsights)
 	mux.HandleFunc("/api/ai/profile", s.handleAIProfile)
 	mux.HandleFunc("/api/ai/profile/generate", s.handleAIGenerateProfile)
+	mux.HandleFunc("/api/ai/knowledge", s.handleAIKnowledgeList)
+	mux.HandleFunc("/api/ai/knowledge/", s.handleAIKnowledgeOne) // /api/ai/knowledge/<session_id>
+	mux.HandleFunc("/api/ai/knowledge/generate-all", s.handleAIGenerateKnowledgeAll)
 	mux.HandleFunc("/api/statusline", s.handleStatusline)
 	mux.HandleFunc("/api/statusline/components", s.handleStatuslineComponents)
 	mux.HandleFunc("/api/statusline/themes", s.handleStatuslineThemes)
@@ -118,6 +121,108 @@ func (s *Server) handleAIGenerateProfile(w http.ResponseWriter, r *http.Request)
 // withSessions é um helper que carrega sessions e responde com JSON ou erro.
 func (s *Server) sessionsAll() ([]*model.Session, error) {
 	return s.DB.ListSessions()
+}
+
+// knowledgeOut decodifica os JSON arrays de string pra resposta legível.
+type knowledgeOut struct {
+	SessionID     string             `json:"session_id"`
+	Problem       string             `json:"problem"`
+	Solution      string             `json:"solution"`
+	Decisions     []decisionOut      `json:"decisions"`
+	Learnings     []string           `json:"learnings"`
+	CodePatterns  []string           `json:"code_patterns"`
+	TechUsed      []string           `json:"tech_used"`
+	OpenQuestions []string           `json:"open_questions"`
+	GeneratedAt   int64              `json:"generated_at"`
+}
+
+type decisionOut struct {
+	Decision  string `json:"decision"`
+	Rationale string `json:"rationale"`
+}
+
+func knowledgeToOut(k *index.Knowledge) knowledgeOut {
+	out := knowledgeOut{
+		SessionID:   k.SessionID,
+		Problem:     k.Problem,
+		Solution:    k.Solution,
+		GeneratedAt: k.GeneratedAt,
+	}
+	_ = json.Unmarshal([]byte(k.Decisions), &out.Decisions)
+	_ = json.Unmarshal([]byte(k.Learnings), &out.Learnings)
+	_ = json.Unmarshal([]byte(k.CodePatterns), &out.CodePatterns)
+	_ = json.Unmarshal([]byte(k.TechUsed), &out.TechUsed)
+	_ = json.Unmarshal([]byte(k.OpenQuestions), &out.OpenQuestions)
+	return out
+}
+
+func (s *Server) handleAIKnowledgeList(w http.ResponseWriter, r *http.Request) {
+	all, err := s.DB.KnowledgeList()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := make([]knowledgeOut, 0, len(all))
+	for _, k := range all {
+		out = append(out, knowledgeToOut(k))
+	}
+	writeJSON(w, 200, out)
+}
+
+// handleAIKnowledgeOne devolve a entrada de uma session específica, ou 404
+// se não existe. POST gera sob demanda pra essa session.
+func (s *Server) handleAIKnowledgeOne(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/ai/knowledge/")
+	id = strings.TrimSuffix(id, "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeErr(w, 400, "session id required")
+		return
+	}
+	if r.Method == http.MethodPost {
+		if !s.requireAI(w) {
+			return
+		}
+		sess, err := s.DB.GetByID(id)
+		if err != nil {
+			writeErr(w, 404, "session not found")
+			return
+		}
+		go func() {
+			k, err := ai.GenerateKnowledge(context.Background(), s.DB, s.AIClient, s.GenModel, sess)
+			if err != nil {
+				s.Hub.Broadcast("knowledge_done", map[string]any{"session_id": id, "error": err.Error()})
+				return
+			}
+			s.Hub.Broadcast("knowledge_done", map[string]any{"session_id": id, "ok": k != nil})
+		}()
+		writeJSON(w, 202, map[string]string{"status": "running"})
+		return
+	}
+	k, err := s.DB.KnowledgeGet(id)
+	if err != nil {
+		writeErr(w, 404, "knowledge not generated yet")
+		return
+	}
+	writeJSON(w, 200, knowledgeToOut(k))
+}
+
+func (s *Server) handleAIGenerateKnowledgeAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	go func() {
+		gen, cached, err := ai.GenerateKnowledgeAll(context.Background(), s.DB, s.AIClient, s.GenModel)
+		payload := map[string]any{"generated": gen, "cached": cached}
+		if err != nil {
+			payload["error"] = err.Error()
+		}
+		s.Hub.Broadcast("knowledge_all_done", payload)
+	}()
+	writeJSON(w, 202, map[string]string{"status": "running"})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

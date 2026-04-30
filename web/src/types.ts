@@ -252,6 +252,23 @@ export type Profile = {
   generated_at: number
 }
 
+export type Decision = {
+  decision: string
+  rationale: string
+}
+
+export type Knowledge = {
+  session_id: string
+  problem: string
+  solution: string
+  decisions: Decision[]
+  learnings: string[]
+  code_patterns: string[]
+  tech_used: string[]
+  open_questions: string[]
+  generated_at: number
+}
+
 export type Bigram = { A: string; B: string; Count: number }
 export type Trigram = { A: string; B: string; C: string; Count: number }
 export type CoOccur = { A: string; B: string; Count: number; PMI: number }

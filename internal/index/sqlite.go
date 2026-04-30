@@ -82,6 +82,19 @@ CREATE TABLE IF NOT EXISTS ai_profile (
 	content TEXT NOT NULL,
 	generated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_knowledge (
+	session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+	jsonl_mtime INTEGER NOT NULL,
+	problem TEXT,
+	solution TEXT,
+	decisions TEXT,        -- JSON array de {decision, rationale}
+	learnings TEXT,        -- JSON array de strings
+	code_patterns TEXT,    -- JSON array de strings
+	tech_used TEXT,        -- JSON array de strings
+	open_questions TEXT,   -- JSON array de strings
+	generated_at INTEGER NOT NULL
+);
 `
 
 const currentSchemaVersion = "1"
@@ -510,6 +523,82 @@ func (db *DB) SearchLike(query string) ([]SearchResult, error) {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Knowledge é o "segundo cérebro" extraído de uma session — problema,
+// solução, decisões, learnings, padrões de código e tech usada.
+// Cada session pode ter zero ou um Knowledge associado.
+type Knowledge struct {
+	SessionID      string
+	JSONLMtime     int64
+	Problem        string
+	Solution       string
+	Decisions      string // JSON array de {decision, rationale}
+	Learnings      string // JSON array de strings
+	CodePatterns   string // JSON array
+	TechUsed       string // JSON array
+	OpenQuestions  string // JSON array
+	GeneratedAt    int64
+}
+
+// KnowledgeGet busca a entrada de uma session.
+func (db *DB) KnowledgeGet(sessionID string) (*Knowledge, error) {
+	row := db.conn.QueryRow(`
+		SELECT session_id, jsonl_mtime, problem, solution, decisions,
+		       learnings, code_patterns, tech_used, open_questions, generated_at
+		FROM session_knowledge WHERE session_id = ?`, sessionID)
+	var k Knowledge
+	if err := row.Scan(&k.SessionID, &k.JSONLMtime, &k.Problem, &k.Solution,
+		&k.Decisions, &k.Learnings, &k.CodePatterns, &k.TechUsed,
+		&k.OpenQuestions, &k.GeneratedAt); err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// KnowledgeUpsert grava ou atualiza.
+func (db *DB) KnowledgeUpsert(k *Knowledge) error {
+	const q = `
+INSERT INTO session_knowledge (session_id, jsonl_mtime, problem, solution,
+	decisions, learnings, code_patterns, tech_used, open_questions, generated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(session_id) DO UPDATE SET
+	jsonl_mtime=excluded.jsonl_mtime,
+	problem=excluded.problem,
+	solution=excluded.solution,
+	decisions=excluded.decisions,
+	learnings=excluded.learnings,
+	code_patterns=excluded.code_patterns,
+	tech_used=excluded.tech_used,
+	open_questions=excluded.open_questions,
+	generated_at=excluded.generated_at`
+	_, err := db.conn.Exec(q, k.SessionID, k.JSONLMtime, k.Problem, k.Solution,
+		k.Decisions, k.Learnings, k.CodePatterns, k.TechUsed, k.OpenQuestions,
+		k.GeneratedAt)
+	return err
+}
+
+// KnowledgeList devolve todas entradas (pra agregações cross-session).
+func (db *DB) KnowledgeList() ([]*Knowledge, error) {
+	rows, err := db.conn.Query(`
+		SELECT session_id, jsonl_mtime, problem, solution, decisions,
+		       learnings, code_patterns, tech_used, open_questions, generated_at
+		FROM session_knowledge ORDER BY generated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Knowledge
+	for rows.Next() {
+		var k Knowledge
+		if err := rows.Scan(&k.SessionID, &k.JSONLMtime, &k.Problem, &k.Solution,
+			&k.Decisions, &k.Learnings, &k.CodePatterns, &k.TechUsed,
+			&k.OpenQuestions, &k.GeneratedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &k)
 	}
 	return out, rows.Err()
 }

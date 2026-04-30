@@ -6,6 +6,7 @@ import type {
   AISummary,
   ClusterInfo,
   Insight,
+  Knowledge,
   Profile,
   Session,
   SimilarResult,
@@ -22,6 +23,8 @@ export function AITab({ reindexCounter }: Props) {
   const [similar, setSimilar] = useState<SimilarResult[]>([])
   const [insights, setInsights] = useState<Insight[]>([])
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [knowledge, setKnowledge] = useState<Knowledge | null>(null)
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [genStatus, setGenStatus] = useState<string>('')
 
   // health + sessions sempre carregam ao montar / quando refresh externo
@@ -42,6 +45,11 @@ export function AITab({ reindexCounter }: Props) {
   useEffect(() => {
     if (!selectedId) return
     api.aiSimilar(selectedId, 10).then(setSimilar).catch(() => setSimilar([]))
+    setKnowledge(null)
+    api
+      .aiKnowledgeOne(selectedId)
+      .then(setKnowledge)
+      .catch(() => setKnowledge(null))
   }, [selectedId])
 
   // poll periódico pra capturar progress de auto-generate em background
@@ -93,6 +101,48 @@ export function AITab({ reindexCounter }: Props) {
     setGenStatus('profile atualizado')
     api.aiProfile().then(setProfile).catch(() => {})
   }, [profileDone])
+
+  const knowledgeDone = useSSE<{ session_id: string; error?: string }>('knowledge_done')
+  useEffect(() => {
+    if (!knowledgeDone) return
+    if (knowledgeDone.error) {
+      setGenStatus('knowledge error: ' + knowledgeDone.error)
+      setKnowledgeLoading(false)
+      return
+    }
+    if (knowledgeDone.session_id === selectedId) {
+      api.aiKnowledgeOne(knowledgeDone.session_id).then(setKnowledge).catch(() => {})
+    }
+    setKnowledgeLoading(false)
+  }, [knowledgeDone, selectedId])
+
+  const knowledgeAllDone = useSSE<{ generated: number; cached: number; error?: string }>(
+    'knowledge_all_done',
+  )
+  useEffect(() => {
+    if (!knowledgeAllDone) return
+    if (knowledgeAllDone.error) {
+      setGenStatus('knowledge-all error: ' + knowledgeAllDone.error)
+      return
+    }
+    setGenStatus(
+      `knowledge: ${knowledgeAllDone.generated} novos, ${knowledgeAllDone.cached} já cacheados`,
+    )
+    if (selectedId) {
+      api.aiKnowledgeOne(selectedId).then(setKnowledge).catch(() => {})
+    }
+  }, [knowledgeAllDone, selectedId])
+
+  const handleGenKnowledge = async () => {
+    if (!selectedId) return
+    setKnowledgeLoading(true)
+    setGenStatus(`extraindo knowledge de ${selectedId.slice(0, 8)}…`)
+    await api.aiKnowledgeGenerate(selectedId)
+  }
+  const handleGenKnowledgeAll = async () => {
+    setGenStatus('extraindo knowledge de todas sessions…')
+    await api.aiKnowledgeGenerateAll()
+  }
 
   if (!health) return <p className="p-6 text-zinc-400">Carregando…</p>
 
@@ -190,6 +240,13 @@ export function AITab({ reindexCounter }: Props) {
           >
             🧠 Gerar profile
           </button>
+          <button
+            onClick={handleGenKnowledgeAll}
+            title="extrai problem/solution/decisions/learnings/code_patterns de cada session"
+            className="px-3 py-1 rounded border border-[#30363d] text-sm hover:bg-[#0d1117]"
+          >
+            📚 Gerar knowledge (todas)
+          </button>
           {genStatus && <span className="text-xs text-zinc-400 self-center">{genStatus}</span>}
         </div>
       </section>
@@ -226,6 +283,42 @@ export function AITab({ reindexCounter }: Props) {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Knowledge — segundo cérebro por session */}
+      <section className="bg-[#161b22] rounded p-4 border border-[#30363d]">
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <div>
+            <h2 className="font-bold">📚 Knowledge da session</h2>
+            <p className="text-xs text-zinc-500">
+              Problema, solução, decisões, learnings, padrões e tech extraídos por LLM.{' '}
+              <span className="text-zinc-400">
+                Selecione uma session em "Sessions similares" abaixo, ou na tab Recent, e gere.
+              </span>
+            </p>
+          </div>
+          {selectedId && (
+            <button
+              onClick={handleGenKnowledge}
+              disabled={knowledgeLoading}
+              className="px-3 py-1 rounded border border-[#30363d] text-sm hover:bg-[#0d1117] whitespace-nowrap disabled:opacity-50"
+            >
+              {knowledgeLoading ? '⏳' : '⚡'} Extrair desta session
+            </button>
+          )}
+        </div>
+        {!selectedId && (
+          <p className="text-sm text-zinc-500 italic">
+            Selecione uma session primeiro pra ver/gerar o knowledge dela.
+          </p>
+        )}
+        {selectedId && !knowledge && (
+          <p className="text-sm text-zinc-500">
+            Sem knowledge gerado pra <code>{selectedId.slice(0, 8)}</code> ainda. Clica em "⚡ Extrair"
+            pra a IA processar — leva ~30-60s.
+          </p>
+        )}
+        {knowledge && <KnowledgeCard k={knowledge} />}
       </section>
 
       {/* Personal profile */}
@@ -389,4 +482,92 @@ function insightIcon(type: string): string {
     default:
       return '💡'
   }
+}
+
+// KnowledgeCard renderiza o "segundo cérebro" extraído de uma session.
+// 6 blocos: problem, solution, decisions, learnings, code_patterns,
+// tech_used + open_questions. Cada um colapsa quando vazio.
+function KnowledgeCard({ k }: { k: Knowledge }) {
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-amber-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">🎯 Problema</h4>
+          <p className="text-zinc-200">{k.problem || <span className="italic text-zinc-500">não identificado</span>}</p>
+        </div>
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-green-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">✅ Solução</h4>
+          <p className="text-zinc-200">{k.solution || <span className="italic text-zinc-500">não identificado</span>}</p>
+        </div>
+      </div>
+
+      {k.decisions.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-blue-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">⚖️ Decisões</h4>
+          <ul className="space-y-2 text-xs">
+            {k.decisions.map((d, i) => (
+              <li key={i}>
+                <span className="font-bold text-zinc-200">{d.decision}</span>
+                {d.rationale && <span className="text-zinc-400"> — {d.rationale}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {k.learnings.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-purple-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">💡 Learnings</h4>
+          <ul className="list-disc list-inside text-xs text-zinc-300 space-y-1">
+            {k.learnings.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {k.code_patterns.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-cyan-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">⚙️ Code patterns</h4>
+          <ul className="list-disc list-inside text-xs text-zinc-300 space-y-1 font-mono">
+            {k.code_patterns.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="grid md:grid-cols-2 gap-3">
+        {k.tech_used.length > 0 && (
+          <div className="bg-[#0d1117] rounded p-3 border-l-4 border-indigo-500">
+            <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">🔧 Tech</h4>
+            <div className="flex flex-wrap gap-1">
+              {k.tech_used.map((t, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 text-xs font-mono"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {k.open_questions.length > 0 && (
+          <div className="bg-[#0d1117] rounded p-3 border-l-4 border-rose-500">
+            <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">❓ Em aberto</h4>
+            <ul className="list-disc list-inside text-xs text-zinc-300 space-y-1">
+              {k.open_questions.map((q, i) => (
+                <li key={i}>{q}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <p className="text-[10px] text-zinc-600 text-right">
+        gerado em {new Date(k.generated_at * 1000).toLocaleString()}
+      </p>
+    </div>
+  )
 }

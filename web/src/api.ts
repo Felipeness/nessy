@@ -6,6 +6,7 @@ import type {
   ClusterInfo,
   Costs,
   Insight,
+  Knowledge,
   Message,
   Profile,
   ReindexStats,
@@ -76,6 +77,12 @@ export const api = {
   aiInsightsGenerate: () => post<{ status: string }>('/api/ai/insights/generate'),
   aiProfile: () => get<Profile>('/api/ai/profile'),
   aiProfileGenerate: () => post<{ status: string }>('/api/ai/profile/generate'),
+  aiKnowledgeList: () => get<Knowledge[]>('/api/ai/knowledge'),
+  aiKnowledgeOne: (id: string) => get<Knowledge>(`/api/ai/knowledge/${id}`),
+  aiKnowledgeGenerate: (id: string) =>
+    post<{ status: string }>(`/api/ai/knowledge/${id}`),
+  aiKnowledgeGenerateAll: () =>
+    post<{ status: string }>('/api/ai/knowledge/generate-all'),
   statuslineComponents: () => get<StatuslineComponentMeta[]>('/api/statusline/components'),
   statuslineThemes: () => get<StatuslineThemesResp>('/api/statusline/themes'),
   statuslineConfigGet: () => get<StatuslineConfig>('/api/statusline/config'),
