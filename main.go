@@ -39,6 +39,16 @@ USAGE:
   claude-history statusline-install     escreve statusLine no ~/.claude/settings.json
   claude-history statusline-preview     mostra o statusline com mock data no terminal
 
+QUERY (Fase 7a — saída human-readable, ou JSON com --json):
+  claude-history similar <q> [--n 5]    top sessions parecidas via embedding
+  claude-history search <q> [--mode]    busca hybrid/body/meta (--all sem dedup)
+  claude-history ask <q>                pergunta pro Ness IA (RAG completo)
+  claude-history insights [--type X]    lista insights gerados (advisor)
+  claude-history knowledge <id>         problem/solution/decisions de 1 session
+  claude-history aggregated             top patterns/decisions/problemas cross-session
+  claude-history project <path>         p90, tech, top tools de 1 projeto
+  claude-history standup [--since 7d]   markdown timeline|project|editorial
+
 EXAMPLES:
   claude-history list
   claude-history list --json | jq '.[] | select(.git_branch == "main")'
@@ -68,6 +78,22 @@ func main() {
 		cmdStatuslineInstall(os.Args[2:])
 	case "statusline-preview":
 		cmdStatuslinePreview(os.Args[2:])
+	case "similar":
+		cmdSimilar(os.Args[2:])
+	case "search":
+		cmdSearchCLI(os.Args[2:])
+	case "ask":
+		cmdAsk(os.Args[2:])
+	case "insights":
+		cmdInsightsCLI(os.Args[2:])
+	case "knowledge":
+		cmdKnowledgeCLI(os.Args[2:])
+	case "aggregated":
+		cmdAggregatedCLI(os.Args[2:])
+	case "project":
+		cmdProjectCLI(os.Args[2:])
+	case "standup":
+		cmdStandupCLI(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
