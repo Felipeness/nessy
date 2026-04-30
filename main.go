@@ -23,6 +23,7 @@ import (
 	"github.com/felipeness/claude-history/internal/parser"
 	"github.com/felipeness/claude-history/internal/pricing"
 	"github.com/felipeness/claude-history/internal/server"
+	"github.com/felipeness/claude-history/internal/statusline"
 	"github.com/felipeness/claude-history/tui"
 )
 
@@ -34,6 +35,7 @@ USAGE:
   claude-history show <session-id>      mostra detalhes de uma session
   claude-history tui                    TUI Bubble Tea com tabs Search/Recent/Stats
   claude-history serve [--port N]       sobe Web UI local em http://localhost:5555
+  claude-history statusline-render      consome stdin do Claude Code, escreve linha ANSI
 
 EXAMPLES:
   claude-history list
@@ -58,6 +60,8 @@ func main() {
 		cmdTui(os.Args[2:])
 	case "serve":
 		cmdServe(os.Args[2:])
+	case "statusline-render":
+		cmdStatuslineRender()
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -546,4 +550,29 @@ func orDash(s string) string {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+// cmdStatuslineRender é o handler chamado pelo Claude Code via settings.json:
+//   { "statusLine": { "type": "command", "command": "claude-history statusline-render" } }
+//
+// Lê o JSON do stdin, carrega ~/.claude-history/statusline.toml (ou default),
+// renderiza, escreve uma linha em stdout. Falha silenciosa em qualquer erro
+// pra não quebrar o terminal do user.
+func cmdStatuslineRender() {
+	home, _ := os.UserHomeDir()
+	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	cfg, err := statusline.LoadConfig(cfgPath)
+	if err != nil {
+		// silencia — statusline não deve nunca quebrar a UX do Claude Code.
+		return
+	}
+
+	var in statusline.Input
+	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+		// stdin malformed → não imprime nada (Claude Code mostra blank).
+		return
+	}
+
+	out := statusline.Render(&in, cfg)
+	fmt.Println(out)
 }
