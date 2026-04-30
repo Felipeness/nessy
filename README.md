@@ -126,15 +126,23 @@ Ativa: `launchctl load ~/Library/LaunchAgents/com.claude-history.plist`
 | Fase | Status | Resumo |
 |---|---|---|
 | 1 — Indexer + CLI | ✅ | parser JSONL, SQLite, `list/show/fzf` |
-| 2 — TUI Bubble Tea | ✅ | 6 tabs, layout adaptativo, detail panel rico |
+| 2 — TUI Bubble Tea | ✅ | 9 tabs, layout adaptativo, detail panel rico |
 | 3 — Web UI (Vite/React) | ✅ | mesmo backend via REST + SSE; tabs Stats/Costs/Timeline/Tools/Behavior |
 | 4 — Behavioral avançado | ✅ | n-grams, bigrams, co-ocorrência PMI, scatter time×cost, style stats |
 | 5 — AI profiling (Ollama) | ✅ | summaries, embeddings, K-means clustering, similarity |
 | 5.1 — AI Insights advisor | ✅ | detecta padrões, repetições, anti-patterns, dicas de economia de token |
-| 6 — Statusline + Studio | ✅ | binário live + editor visual web com drag-drop, themes, mock data |
-| 7 — MCP server | 🟡 planned | expor history como MCP pra Claude consultar mid-session |
+| 5.2 — AI Knowledge (segundo cérebro) | ✅ | tabela `session_knowledge` com problem/solution/decisions/learnings/patterns/tech/open_questions extraídos por LLM |
+| 5.3 — Knowledge agregado cross-session | ✅ | top patterns/decisões/problemas recorrentes/tech/open_questions agregados |
+| 6 — Statusline + Studio | ✅ | binário live + editor visual web com drag-drop, themes, mock data — também spin-off público em [`claude-statusline`](https://github.com/Felipeness/claude-statusline) |
+| 7 — Ness IA (chat com RAG) | ✅ | tab "🧠 Ness" no Web/TUI: pergunta direto pro segundo cérebro, RAG sobre summaries+knowledge, fontes citadas em `[session_id]`, fallback `[geral]` quando histórico não cobre |
+| 7a — CLI extension | ✅ | 8 subcomandos query (`similar/search/ask/insights/knowledge/aggregated/project/standup`) com `--json` pra Claude e scripts consumirem via Bash |
+| 8 — MCP server | 🟡 planned | wrapper fino mapeando tools MCP → calls de CLI |
+| 9 — Sistema (launchd + menu bar + notif) | 🟡 planned | daemon persistente, menu bar Mac, notificações p90/burn |
+| 10 — TUI session tree | 🟡 planned | detectar continuações por cwd+branch+gap, view tree |
 
 ## CLI
+
+### Comandos básicos
 
 ```bash
 claude-history list                       # tabela
@@ -142,10 +150,73 @@ claude-history list --json | jq '.[]'     # JSON pra script
 claude-history list --tsv                 # TSV
 claude-history show 6df22c8d              # detalhes (aceita ID curto)
 claude-history fzf                        # fzf interativo, Enter retoma
-claude-history tui                        # TUI Bubble Tea
+claude-history tui                        # TUI Bubble Tea (9 tabs)
 claude-history serve                      # Web UI em http://localhost:5555
 claude-history statusline-install         # instala statusline no Claude Code
 claude-history statusline-preview --all   # preview no terminal (5 themes × 3 styles)
+```
+
+### Query (Fase 7a) — pra scripts e Claude consumirem via Bash
+
+Todos retornam human-readable por default, JSON com `--json`. Lêem DB direto, **sem precisar daemon**. Falhas graceful (Ollama down → JSON com `error` ao invés de quebrar).
+
+```bash
+# Similar — top sessions parecidas via embedding+cosine
+claude-history similar "auth bug com middleware" --n 5 --json
+
+# Search — hybrid (default) / body / meta / sim
+claude-history search docker --mode body --json
+claude-history search "react auth" --all     # sem dedup, todos hits
+
+# Ask — chat Ness IA na CLI (RAG completo, fontes citadas)
+claude-history ask "como uso docker no mac?"
+# → "Você usa Docker via Colima... [6df22c8d]"
+# → fontes listadas com session_id + similarity %
+
+# Insights — advisor results (token_waste, anti_pattern, etc.)
+claude-history insights --type token_waste --json
+
+# Knowledge de 1 session (problem/solution/decisions/learnings/patterns/tech/open)
+claude-history knowledge 6df22c8d
+claude-history knowledge 6df22c8d --json | jq '.solution'
+
+# Aggregated cross-session — top patterns, decisões, problemas recorrentes, em aberto
+claude-history aggregated
+
+# Project stats — p90, tech, top tools, ticket pattern
+claude-history project ~/Desktop/Projects/claude-history --json
+
+# Standup markdown pra Slack/daily
+claude-history standup --since 7d                    # editorial (default — usa knowledge)
+claude-history standup --since 7d --format timeline  # cronológico por dia/hora
+claude-history standup --since 14d --format project  # agrupado por projeto + cost
+```
+
+### Use cases
+
+**Claude consultando seu próprio histórico mid-session** (o killer use case):
+```bash
+# No meio de outra session do Claude Code, ele pode rodar via Bash:
+claude-history ask "como resolvi auth bug 3 meses atrás?" --json
+# → contexto rico citando session_ids reais
+```
+
+**Standup automatizado**:
+```bash
+claude-history standup --since 7d | pbcopy
+# cola no Slack/daily
+```
+
+**CI/CD insight check**:
+```bash
+# script verifica se há open questions críticas em aberto
+COUNT=$(claude-history aggregated --json | jq '.open_questions | length')
+[ "$COUNT" -gt 5 ] && echo "⚠ $COUNT pendências"
+```
+
+**Drill-down num projeto antes de decidir refactor**:
+```bash
+claude-history project ~/projects/my-app --json | jq '.tech_stack, .top_tools'
 ```
 
 ## TUI
