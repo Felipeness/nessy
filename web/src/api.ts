@@ -81,10 +81,11 @@ export const api = {
   statuslineConfigGet: () => get<StatuslineConfig>('/api/statusline/config'),
   statuslineConfigSave: (cfg: StatuslineConfig) =>
     postJSON<{ status: string; path: string }>('/api/statusline/config', cfg),
-  statuslineRender: (cfg: StatuslineConfig, mockInput?: unknown) =>
+  statuslineRender: (cfg: StatuslineConfig, mockInput?: unknown, mockHistory?: unknown) =>
     postJSON<{ ansi: string; html: string }>('/api/statusline/render', {
       config: cfg,
       mock_input: mockInput,
+      mock_history: mockHistory,
     }),
   statuslinePresets: () =>
     get<{ names: string[]; presets: Record<string, StatuslineConfig> }>('/api/statusline/presets'),

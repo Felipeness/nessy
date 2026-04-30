@@ -136,11 +136,13 @@ func (s *Server) handleStatuslineConfig(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// renderRequest body: { config: Config, mock_input: Input }. Devolve a string
-// ANSI gerada — frontend converte com ansi-up pra HTML.
+// renderRequest body: { config, mock_input, mock_history }. Studio usa
+// mock_history pra simular daemon (cost_p90, burn_rate, cluster_name) sem
+// precisar do daemon real respondendo.
 type renderRequest struct {
-	Config    *statusline.Config `json:"config"`
-	MockInput *statusline.Input  `json:"mock_input"`
+	Config      *statusline.Config      `json:"config"`
+	MockInput   *statusline.Input       `json:"mock_input"`
+	MockHistory *statusline.HistoryData `json:"mock_history"`
 }
 
 func (s *Server) handleStatuslineRender(w http.ResponseWriter, r *http.Request) {
@@ -160,11 +162,7 @@ func (s *Server) handleStatuslineRender(w http.ResponseWriter, r *http.Request) 
 	if req.MockInput == nil {
 		req.MockInput = defaultMockInput()
 	}
-	// Disable history fetch durante preview — engine usa só mock data.
-	// (frontend pode passar history mockado depois se quiser badges p90).
-	cfg := *req.Config
-	cfg.History.Endpoint = ""
-	out := statusline.Render(req.MockInput, &cfg)
+	out := statusline.RenderWith(req.MockInput, req.Config, req.MockHistory)
 	writeJSON(w, 200, map[string]string{
 		"ansi": out,
 		"html": statusline.AnsiToHTML(out),

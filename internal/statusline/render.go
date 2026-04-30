@@ -8,13 +8,20 @@ import (
 // Render é a entry point: lê config, parseia stdin, busca history (best-effort),
 // itera lines/components, devolve string ANSI pronta pra stdout.
 func Render(in *Input, cfg *Config) string {
-	theme := GetTheme(cfg.Theme)
 	hist := FetchHistory(
 		cfg.History.Endpoint,
 		in.SessionID,
 		in.Workspace.ProjectDir,
 		cfg.History.TimeoutDuration(),
 	)
+	return RenderWith(in, cfg, hist)
+}
+
+// RenderWith é a forma testável: caller fornece o HistoryData (ou nil) ao
+// invés de buscar do daemon. Studio web usa essa pra ter controle total
+// sobre os dados na preview.
+func RenderWith(in *Input, cfg *Config, hist *HistoryData) string {
+	theme := GetTheme(cfg.Theme)
 	ctx := &RenderCtx{
 		In:      in,
 		History: hist,

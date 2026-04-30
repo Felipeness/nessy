@@ -22,7 +22,7 @@ import type {
   StatuslineThemesResp,
 } from '../types'
 
-// defaultMock — alinhado com defaultMockInput() do backend.
+// DEFAULT_MOCK — valores plausíveis pra preview inicial.
 const DEFAULT_MOCK: StatuslineMock = {
   cwd: '/Users/dev/projects/my-app',
   branch: 'feat/CC-1234-statusline',
@@ -34,9 +34,13 @@ const DEFAULT_MOCK: StatuslineMock = {
   rate_5h_pct: 73,
   rate_7d_pct: 18,
   vim_mode: '',
+  burn_rate_tpm: 850,
+  cost_p90: 0.5,
+  cost_today: 4.23,
+  cluster_name: 'auth-refactor',
 }
 
-// mockToInput transforma os campos editáveis no shape Input que o backend espera.
+// mockToInput → shape Input do Claude Code (stdin).
 function mockToInput(m: StatuslineMock) {
   return {
     cwd: m.cwd,
@@ -55,6 +59,29 @@ function mockToInput(m: StatuslineMock) {
     },
     worktree: { branch: m.branch },
     vim: m.vim_mode ? { mode: m.vim_mode } : undefined,
+  }
+}
+
+// mockToHistory → simula HistoryData que o daemon devolveria. Permite
+// preview de burn_rate, cost_session badge vs p90, cluster, cost_today.
+function mockToHistory(m: StatuslineMock) {
+  return {
+    session: {
+      id: 'preview-mock',
+      cost_usd: m.cost_usd,
+      burn_rate_tpm: m.burn_rate_tpm,
+    },
+    daily: { cost_usd: m.cost_today, sessions_count: 8 },
+    monthly: { accumulated: 0, today: 0, projection: 0, day_of_month: 0, days: 0 },
+    project: {
+      name: 'preview',
+      dir: m.cwd,
+      p90_cost: m.cost_p90,
+      p90_tokens: 50000,
+      ticket: '',
+      cluster_name: m.cluster_name,
+      tech_stack: ['Go', 'TypeScript'],
+    },
   }
 }
 
@@ -107,7 +134,7 @@ export function StudioTab() {
     if (!cfg) return
     const t = setTimeout(() => {
       api
-        .statuslineRender(cfg, mockToInput(mock))
+        .statuslineRender(cfg, mockToInput(mock), mockToHistory(mock))
         .then((r) => setPreviewHTML(r.html))
         .catch((err) => setPreviewHTML('<span class="text-red-400">error: ' + String(err) + '</span>'))
     }, 150)
@@ -258,7 +285,17 @@ export function StudioTab() {
             </button>
           }
         >
-          <MockDataEditor mock={mock} onChange={setMock} />
+          <div className="text-[10px] text-amber-400 mb-2 leading-relaxed">
+            ⚠ Mock fields só aparecem se o component correspondente estiver na linha. Adicione{' '}
+            <code>vim_mode</code>, <code>lines_changed</code>, <code>rate_5h</code>,{' '}
+            <code>rate_7d</code>, <code>burn_rate</code>, <code>cost_today</code>,{' '}
+            <code>cost_month</code>, <code>cluster</code> pra ver o efeito.
+          </div>
+          <MockDataEditor
+            mock={mock}
+            componentsInUse={cfg ? cfg.lines.flatMap((l) => l.components) : []}
+            onChange={setMock}
+          />
         </Section>
 
         <Section title="Como instalar">
@@ -666,118 +703,187 @@ function ThresholdHints({ name }: { name: string }) {
   return <p className="text-[10px] text-[var(--color-muted)]">{h}</p>
 }
 
-// MockDataEditor — form pra editar os valores que viram Input no preview.
+// MockDataEditor — form com campos do Input + History. Cada campo mostra
+// um indicador "✓"/"·" mostrando se ele afeta a preview atual (se o component
+// correspondente está em alguma linha).
 function MockDataEditor({
   mock,
+  componentsInUse,
   onChange,
 }: {
   mock: StatuslineMock
+  componentsInUse: string[]
   onChange: (m: StatuslineMock) => void
 }) {
   const set = <K extends keyof StatuslineMock>(k: K, v: StatuslineMock[K]) =>
     onChange({ ...mock, [k]: v })
 
+  const has = (name: string) => componentsInUse.includes(name)
+
   return (
-    <div className="space-y-2 text-xs">
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="cwd">
-          <input
-            type="text"
-            value={mock.cwd}
-            onChange={(e) => set('cwd', e.target.value)}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+    <div className="space-y-3 text-xs">
+      <div>
+        <div className="text-[10px] text-[var(--color-muted)] uppercase tracking-wide mb-1.5">
+          Input (stdin do Claude Code)
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="cwd" active={has('cwd')}>
+            <input
+              type="text"
+              value={mock.cwd}
+              onChange={(e) => set('cwd', e.target.value)}
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+            />
+          </Field>
+          <Field label="branch" active={has('git') || has('ticket') || has('worktree')}>
+            <input
+              type="text"
+              value={mock.branch}
+              onChange={(e) => set('branch', e.target.value)}
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+            />
+          </Field>
+          <Field label="model" active={has('model')}>
+            <input
+              type="text"
+              value={mock.model}
+              onChange={(e) => set('model', e.target.value)}
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+            />
+          </Field>
+          <Field label="vim mode" active={has('vim_mode')}>
+            <select
+              value={mock.vim_mode}
+              onChange={(e) => set('vim_mode', e.target.value as StatuslineMock['vim_mode'])}
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1"
+            >
+              <option value="">(off)</option>
+              <option value="NORMAL">NORMAL</option>
+              <option value="INSERT">INSERT</option>
+            </select>
+          </Field>
+        </div>
+
+        <div className="mt-2 space-y-2">
+          <SliderField
+            label="context %"
+            value={mock.context_pct}
+            min={0}
+            max={100}
+            step={1}
+            onChange={(v) => set('context_pct', v)}
+            active={has('context_pct')}
           />
-        </Field>
-        <Field label="branch">
-          <input
-            type="text"
-            value={mock.branch}
-            onChange={(e) => set('branch', e.target.value)}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+          <SliderField
+            label="cost USD (session)"
+            value={mock.cost_usd}
+            min={0}
+            max={50}
+            step={0.05}
+            onChange={(v) => set('cost_usd', v)}
+            active={has('cost_session')}
           />
-        </Field>
-        <Field label="model">
-          <input
-            type="text"
-            value={mock.model}
-            onChange={(e) => set('model', e.target.value)}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
-          />
-        </Field>
-        <Field label="vim mode">
-          <select
-            value={mock.vim_mode}
-            onChange={(e) => set('vim_mode', e.target.value as StatuslineMock['vim_mode'])}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1"
-          >
-            <option value="">(off)</option>
-            <option value="NORMAL">NORMAL</option>
-            <option value="INSERT">INSERT</option>
-          </select>
-        </Field>
+
+          <div className="grid grid-cols-2 gap-2">
+            <SliderField
+              label="rate 5h %"
+              value={mock.rate_5h_pct}
+              min={0}
+              max={100}
+              step={1}
+              onChange={(v) => set('rate_5h_pct', v)}
+              active={has('rate_5h')}
+            />
+            <SliderField
+              label="rate 7d %"
+              value={mock.rate_7d_pct}
+              min={0}
+              max={100}
+              step={1}
+              onChange={(v) => set('rate_7d_pct', v)}
+              active={has('rate_7d')}
+            />
+            <Field label="lines added" active={has('lines_changed')}>
+              <input
+                type="number"
+                min={0}
+                value={mock.lines_added}
+                onChange={(e) => set('lines_added', Number(e.target.value))}
+                className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+              />
+            </Field>
+            <Field label="lines removed" active={has('lines_changed')}>
+              <input
+                type="number"
+                min={0}
+                value={mock.lines_removed}
+                onChange={(e) => set('lines_removed', Number(e.target.value))}
+                className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+              />
+            </Field>
+          </div>
+        </div>
       </div>
 
-      <SliderField
-        label="context %"
-        value={mock.context_pct}
-        min={0}
-        max={100}
-        step={1}
-        onChange={(v) => set('context_pct', v)}
-      />
-      <SliderField
-        label="cost USD"
-        value={mock.cost_usd}
-        min={0}
-        max={5}
-        step={0.01}
-        onChange={(v) => set('cost_usd', v)}
-      />
-
-      <div className="grid grid-cols-2 gap-2">
-        <SliderField
-          label="rate 5h %"
-          value={mock.rate_5h_pct}
-          min={0}
-          max={100}
-          step={1}
-          onChange={(v) => set('rate_5h_pct', v)}
-        />
-        <SliderField
-          label="rate 7d %"
-          value={mock.rate_7d_pct}
-          min={0}
-          max={100}
-          step={1}
-          onChange={(v) => set('rate_7d_pct', v)}
-        />
-        <Field label="lines added">
-          <input
-            type="number"
+      <div className="border-t border-[var(--color-border)] pt-3">
+        <div className="text-[10px] text-[var(--color-muted)] uppercase tracking-wide mb-1.5">
+          History (simula daemon)
+        </div>
+        <div className="space-y-2">
+          <SliderField
+            label="burn rate (t/min)"
+            value={mock.burn_rate_tpm}
             min={0}
-            value={mock.lines_added}
-            onChange={(e) => set('lines_added', Number(e.target.value))}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+            max={5000}
+            step={50}
+            onChange={(v) => set('burn_rate_tpm', v)}
+            active={has('burn_rate')}
           />
-        </Field>
-        <Field label="lines removed">
-          <input
-            type="number"
+          <SliderField
+            label="cost p90 USD"
+            value={mock.cost_p90}
             min={0}
-            value={mock.lines_removed}
-            onChange={(e) => set('lines_removed', Number(e.target.value))}
-            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+            max={20}
+            step={0.05}
+            onChange={(v) => set('cost_p90', v)}
+            active={has('cost_session')}
           />
-        </Field>
+          <SliderField
+            label="cost today USD"
+            value={mock.cost_today}
+            min={0}
+            max={50}
+            step={0.1}
+            onChange={(v) => set('cost_today', v)}
+            active={has('cost_today')}
+          />
+          <Field label="cluster name" active={has('cluster')}>
+            <input
+              type="text"
+              value={mock.cluster_name}
+              onChange={(e) => set('cluster_name', e.target.value)}
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+            />
+          </Field>
+        </div>
       </div>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  active,
+  children,
+}: {
+  label: string
+  active?: boolean
+  children: React.ReactNode
+}) {
   return (
     <div>
-      <label className="block mb-1 text-[10px] text-[var(--color-muted)] uppercase tracking-wide">
+      <label className="flex items-center gap-1 mb-1 text-[10px] text-[var(--color-muted)] uppercase tracking-wide">
+        <ActiveDot active={active} />
         {label}
       </label>
       {children}
@@ -792,6 +898,7 @@ function SliderField({
   max,
   step,
   onChange,
+  active,
 }: {
   label: string
   value: number
@@ -799,11 +906,14 @@ function SliderField({
   max: number
   step: number
   onChange: (v: number) => void
+  active?: boolean
 }) {
   return (
     <div>
       <div className="flex justify-between text-[10px] text-[var(--color-muted)] uppercase tracking-wide mb-1">
-        <span>{label}</span>
+        <span className="flex items-center gap-1">
+          <ActiveDot active={active} /> {label}
+        </span>
         <span className="font-mono normal-case tracking-normal text-[var(--color-fg)]">
           {step < 1 ? value.toFixed(2) : value}
         </span>
@@ -818,6 +928,18 @@ function SliderField({
         className="w-full"
       />
     </div>
+  )
+}
+
+// ActiveDot — bolinha que mostra se o campo afeta o render atual.
+function ActiveDot({ active }: { active?: boolean }) {
+  if (active === undefined) return null
+  return (
+    <span
+      className="inline-block w-1.5 h-1.5 rounded-full"
+      style={{ background: active ? '#4ade80' : '#525252' }}
+      title={active ? 'component em uso — afeta a preview' : 'component não está em nenhuma linha'}
+    />
   )
 }
 

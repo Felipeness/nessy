@@ -190,7 +190,7 @@ export type StatuslineConfig = {
 }
 
 // StatuslineMock é o subset de campos que o user edita no Mock Data editor.
-// Convertido em Input completo pelo Studio antes de mandar pro POST /render.
+// Convertido em Input + HistoryData pelo Studio antes de mandar pro POST /render.
 export type StatuslineMock = {
   cwd: string
   branch: string
@@ -202,6 +202,11 @@ export type StatuslineMock = {
   rate_5h_pct: number
   rate_7d_pct: number
   vim_mode: '' | 'NORMAL' | 'INSERT'
+  // History-side (simula daemon) — afetam burn_rate, cost_session badge, cluster.
+  burn_rate_tpm: number
+  cost_p90: number
+  cost_today: number
+  cluster_name: string
 }
 
 export type AIHealth = {
