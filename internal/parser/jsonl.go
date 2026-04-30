@@ -210,27 +210,81 @@ func ParseSession(path string) (*Session, error) {
 	return s, nil
 }
 
-// extractText pulls plain text from a `message.content` field, which can be
-// either a JSON string or an array of {type:"text",text:"..."} blocks.
+// extractText pulls searchable text de um `message.content` field. Aceita:
+//   - string direta: "..."
+//   - array de blocks com types: "text", "tool_use", "tool_result"
+//
+// Pra tool_use, inclui name + input JSON serializado. Pra tool_result, inclui
+// o content (que pode ser string ou array de blocks aninhado). Sem isso, ~70%
+// do conteúdo das sessions ficam fora do FTS.
 func extractText(raw json.RawMessage) string {
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
 		return strings.TrimSpace(asString)
 	}
 	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type    string          `json:"type"`
+		Text    string          `json:"text"`
+		Name    string          `json:"name"`              // pra tool_use
+		Input   json.RawMessage `json:"input,omitempty"`   // pra tool_use
+		Content json.RawMessage `json:"content,omitempty"` // pra tool_result
 	}
-	if err := json.Unmarshal(raw, &blocks); err == nil {
-		var parts []string
-		for _, b := range blocks {
-			if b.Type == "text" && b.Text != "" {
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if b.Text != "" {
 				parts = append(parts, b.Text)
 			}
+		case "tool_use":
+			if b.Name != "" {
+				parts = append(parts, "tool:"+b.Name)
+			}
+			if input := flattenJSON(b.Input); input != "" {
+				parts = append(parts, input)
+			}
+		case "tool_result":
+			if t := extractText(b.Content); t != "" {
+				parts = append(parts, t)
+			}
 		}
-		return strings.TrimSpace(strings.Join(parts, " "))
 	}
-	return ""
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// flattenJSON serializa um JSON ressaltando só strings — ignora structure.
+// Pra tool_use input com 50 keys aninhadas, isso vira o conteúdo de string
+// concatenado. Search-friendly, sem ruído de chaves técnicas.
+func flattenJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var anyVal any
+	if err := json.Unmarshal(raw, &anyVal); err != nil {
+		return string(raw)
+	}
+	var b strings.Builder
+	walkStrings(anyVal, &b)
+	return strings.TrimSpace(b.String())
+}
+
+func walkStrings(v any, b *strings.Builder) {
+	switch x := v.(type) {
+	case string:
+		b.WriteString(x)
+		b.WriteByte(' ')
+	case []any:
+		for _, e := range x {
+			walkStrings(e, b)
+		}
+	case map[string]any:
+		for _, e := range x {
+			walkStrings(e, b)
+		}
+	}
 }
 
 // countToolUses walks an assistant content array and increments a counter for

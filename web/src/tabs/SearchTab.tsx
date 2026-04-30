@@ -6,12 +6,13 @@ import { ModelBadge } from '../components/ModelBadge'
 
 type Props = { reindexCounter: number }
 
-type Mode = 'metadata' | 'fts' | 'semantic'
+type Mode = 'hybrid' | 'metadata' | 'fts' | 'semantic'
 
 function detectMode(q: string): { mode: Mode; stripped: string } {
   if (q.startsWith(':body ')) return { mode: 'fts', stripped: q.slice(6) }
+  if (q.startsWith(':meta ')) return { mode: 'metadata', stripped: q.slice(6) }
   if (q.startsWith(':sim ')) return { mode: 'semantic', stripped: q.slice(5) }
-  return { mode: 'metadata', stripped: q }
+  return { mode: 'hybrid', stripped: q }
 }
 
 export function SearchTab({ reindexCounter: _ }: Props) {
@@ -52,7 +53,7 @@ export function SearchTab({ reindexCounter: _ }: Props) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder='ex: react   |   :body decoder bug   |   :sim auth refactor   |   project:claude cost:>1 since:7d'
+            placeholder='ex: docker   |   :sim auth refactor   |   project:claude cost:>1 since:7d   (hybrid: busca em tudo)'
             className="flex-1 px-3 py-2 rounded bg-[var(--color-card)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm font-mono"
           />
           <button
@@ -122,7 +123,8 @@ export function SearchTab({ reindexCounter: _ }: Props) {
 
 function ModeBadge({ mode }: { mode: Mode }) {
   const colors: Record<Mode, string> = {
-    metadata: 'text-[var(--color-accent)]',
+    hybrid: 'text-[var(--color-accent)]',
+    metadata: 'text-blue-400',
     fts: 'text-amber-400',
     semantic: 'text-purple-400',
   }
@@ -133,16 +135,26 @@ function SearchHelp() {
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-card)] text-xs space-y-3">
       <div>
-        <p className="font-bold text-[var(--color-fg)] mb-1">3 modos de busca</p>
+        <p className="font-bold text-[var(--color-fg)] mb-1">4 modos de busca</p>
         <table className="w-full text-[11px]">
           <tbody>
             <tr>
               <td className="py-1 pr-3 align-top">
-                <span className="text-[var(--color-accent)]">metadata</span>
+                <span className="text-[var(--color-accent)]">hybrid</span>
                 <span className="text-[var(--color-muted)]"> (default)</span>
               </td>
               <td className="text-[var(--color-muted)]">
-                substring em path, branch, msgs, model, tools, AI summary. Rápido.
+                metadata + full-text combinados. Acha em path, branch, msgs, AI
+                summary E também dentro do conteúdo das conversas. É o que você
+                quer 99% do tempo — basta digitar.
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-3 align-top">
+                <code className="text-blue-400">:meta &lt;q&gt;</code>
+              </td>
+              <td className="text-[var(--color-muted)]">
+                só metadata (sem ler conteúdo). Mais rápido pra paths/branches.
               </td>
             </tr>
             <tr>
@@ -150,7 +162,7 @@ function SearchHelp() {
                 <code className="text-amber-400">:body &lt;q&gt;</code>
               </td>
               <td className="text-[var(--color-muted)]">
-                full-text no conteúdo das mensagens via FTS5 com ranking BM25.
+                só FTS5 com ranking BM25 sobre o conteúdo das mensagens.
               </td>
             </tr>
             <tr>
@@ -158,8 +170,8 @@ function SearchHelp() {
                 <code className="text-purple-400">:sim &lt;q&gt;</code>
               </td>
               <td className="text-[var(--color-muted)]">
-                busca semântica via embeddings — acha sessions parecidas mesmo
-                sem palavra exata. Requer Ollama up.
+                semântica via embeddings — acha sessions parecidas mesmo sem
+                palavra exata. Requer Ollama up.
               </td>
             </tr>
           </tbody>

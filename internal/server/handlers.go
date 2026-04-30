@@ -672,32 +672,32 @@ type searchResultEntry struct {
 
 // handleSearch suporta 4 modos:
 //
-//   - metadata (default) — substring em path/branch/msg/summary/model/tools
-//   - fts (`:body <q>` ou mode=fts) — full-text via FTS5 sobre messages
-//   - semantic (`:sim <q>` ou mode=semantic) — cosine similarity sobre embeddings
+//   - hybrid  (DEFAULT) — metadata + full-text via FTS5, deduplicado por session.
+//     Acha tanto match em path/branch/msg/summary quanto dentro do conteúdo
+//     das mensagens. Tipicamente o que o user quer.
+//   - meta    (`:meta <q>`) — só metadata (path/branch/msg/summary/model/tools)
+//   - body    (`:body <q>`) — só FTS5 sobre messages
+//   - semantic (`:sim <q>`) — cosine similarity sobre embeddings
 //
 // Filtros parseados do query (em qualquer modo):
 //
 //   project:<substr>, branch:<substr>, model:<substr>, since:<dur> (ex 7d, 24h),
-//   cost:>N, cost:<N, has:summary, has:errors
-//
-// Exemplos:
-//   "react"                        → busca substring em todos campos
-//   ":body decoder bug"            → FTS sobre conteúdo
-//   "cost:>5 since:7d react"       → cost>$5 últimos 7d com "react"
-//   "project:claude-history :sim error handling" → semantic dentro do projeto
+//   cost:>N, cost:<N
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	modeFlag := r.URL.Query().Get("mode")
 
-	// Detect prefixes pra mode override
+	// Default agora é hybrid (metadata + FTS combinados), não só metadata.
 	mode := modeFlag
-	if mode == "" {
-		mode = "metadata"
+	if mode == "" || mode == "metadata" {
+		mode = "hybrid"
 	}
 	switch {
 	case strings.HasPrefix(q, ":body "):
 		mode = "fts"
+		q = strings.TrimSpace(q[6:])
+	case strings.HasPrefix(q, ":meta "):
+		mode = "metadata"
 		q = strings.TrimSpace(q[6:])
 	case strings.HasPrefix(q, ":sim "):
 		mode = "semantic"
@@ -742,10 +742,48 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		s.searchFTS(q, candidates, &resp)
 	case "semantic":
 		s.searchSemantic(r.Context(), q, candidates, embeddingByID, &resp)
-	default: // metadata
+	case "metadata":
 		s.searchMetadata(q, candidates, summaryByID, &resp)
+	default: // hybrid — metadata primeiro, depois FTS, dedupe por session
+		s.searchHybrid(q, candidates, summaryByID, &resp)
 	}
 	writeJSON(w, 200, resp)
+}
+
+// searchHybrid roda metadata + FTS5 e combina, deduplicando por session.
+// Metadata vem primeiro (mais barata, hits diretos). FTS preenche gaps.
+func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp) {
+	seen := map[string]bool{}
+	// Metadata
+	lower := strings.ToLower(q)
+	for _, sess := range sessions {
+		if hit, snippet, role := metaMatchExt(sess, lower, summaries); hit {
+			seen[sess.SessionID] = true
+			resp.Results = append(resp.Results, searchResultEntry{
+				Session: sess, Snippet: snippet, Role: role,
+			})
+		}
+	}
+	// FTS5 — só os que ainda não saíram
+	results, err := s.DB.SearchFTS(q)
+	if err != nil {
+		results, _ = s.DB.SearchLike(q)
+	}
+	byID := map[string]*model.Session{}
+	for _, sess := range sessions {
+		byID[sess.SessionID] = sess
+	}
+	for _, r := range results {
+		if seen[r.SessionID] {
+			continue
+		}
+		seen[r.SessionID] = true
+		if sess, ok := byID[r.SessionID]; ok {
+			resp.Results = append(resp.Results, searchResultEntry{
+				Session: sess, Snippet: r.Snippet, Role: "body:" + r.Role, Rank: r.Rank,
+			})
+		}
+	}
 }
 
 // searchMetadata busca substring case-insensitive em vários campos +

@@ -16,12 +16,29 @@ type ReindexStats struct {
 	Removed int
 }
 
+// parserVersion bumpa quando extractText muda — invalida FTS de todas sessions
+// e força repopular. Vai pra last_index_meta.parser_version.
+const parserVersion = "2"
+
 // Reindex walks root looking for *.jsonl files (excluding subagents/),
 // re-parsing only those whose mtime is newer than the cached value.
 // Sessions whose JSONL no longer exists on disk are deleted.
 func (db *DB) Reindex(root string) (ReindexStats, error) {
 	var stats ReindexStats
 	seen := map[string]bool{}
+
+	// Se parser_version mudou, nuke FTS pra forçar re-população.
+	var stored string
+	_ = db.conn.QueryRow(`SELECT value FROM last_index_meta WHERE key = 'parser_version'`).Scan(&stored)
+	if stored != parserVersion {
+		if _, err := db.conn.Exec(`DELETE FROM messages_fts`); err != nil {
+			return stats, err
+		}
+		_, _ = db.conn.Exec(
+			`INSERT OR REPLACE INTO last_index_meta(key, value) VALUES('parser_version', ?)`,
+			parserVersion,
+		)
+	}
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -43,13 +60,27 @@ func (db *DB) Reindex(root string) (ReindexStats, error) {
 		mtime := info.ModTime().UnixNano()
 
 		var cachedMtime int64
-		row := db.conn.QueryRow(`SELECT jsonl_mtime FROM sessions WHERE jsonl_path = ?`, path)
-		switch err := row.Scan(&cachedMtime); {
-		case err == nil && cachedMtime == mtime:
-			return nil // up-to-date
-		case err == nil:
+		var cachedSID string
+		row := db.conn.QueryRow(`SELECT session_id, jsonl_mtime FROM sessions WHERE jsonl_path = ?`, path)
+		scanErr := row.Scan(&cachedSID, &cachedMtime)
+		if scanErr == nil && cachedMtime == mtime {
+			// Cache de metadata bate, mas o FTS pode estar subpopulado por
+			// versão antiga do parser. Verifica e força reindex de msgs se
+			// necessário (sem regravar metadata da session).
+			var ftsCount int
+			_ = db.conn.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE session_id = ?`, cachedSID).Scan(&ftsCount)
+			if ftsCount > 0 {
+				return nil // up-to-date completo
+			}
+			// Re-indexa só as messages, mantém metadata
+			if msgs, err := parser.ParseMessages(path); err == nil {
+				_ = db.IndexMessages(msgs)
+			}
+			return nil
+		}
+		if scanErr == nil {
 			stats.Updated++
-		default:
+		} else {
 			stats.New++
 		}
 
