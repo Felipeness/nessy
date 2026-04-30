@@ -49,6 +49,11 @@ QUERY (Fase 7a — saída human-readable, ou JSON com --json):
   claude-history project <path>         p90, tech, top tools de 1 projeto
   claude-history standup [--since 7d]   markdown timeline|project|editorial
 
+MCP (Fase 8):
+  claude-history mcp                    sobe MCP server em stdio (chamado pelo Claude Code)
+  claude-history mcp-install [--force]  registra em ~/.claude/settings.json mcpServers
+                  [--uninstall]
+
 EXAMPLES:
   claude-history list
   claude-history list --json | jq '.[] | select(.git_branch == "main")'
@@ -94,6 +99,10 @@ func main() {
 		cmdProjectCLI(os.Args[2:])
 	case "standup":
 		cmdStandupCLI(os.Args[2:])
+	case "mcp":
+		cmdMCPServe()
+	case "mcp-install":
+		cmdMCPInstall(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
