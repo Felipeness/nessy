@@ -22,6 +22,12 @@ type keymap struct {
 	Expand  key.Binding
 	Fuzzy   key.Binding
 	Stats   key.Binding
+	GenSummaries     key.Binding
+	GenClusters      key.Binding
+	GenInsights      key.Binding
+	GenProfile       key.Binding
+	GenKnowledge     key.Binding
+	GenKnowledgeAll  key.Binding
 	OpenDir key.Binding
 	Export  key.Binding
 	Tab1    key.Binding
@@ -54,6 +60,13 @@ var keys = keymap{
 	Expand:  key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "expand/collapse search hits")),
 	Fuzzy:   key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "toggle fuzzy/exact search")),
 	Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats toggle")),
+	// AI tab actions — capital letters não conflitam com input lowercase
+	GenSummaries:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "[AI] gerar summaries")),
+	GenClusters:     key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "[AI] recompute clusters")),
+	GenInsights:     key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "[AI] gerar insights")),
+	GenProfile:      key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "[AI] gerar profile")),
+	GenKnowledge:    key.NewBinding(key.WithKeys("K"), key.WithHelp("K", "[AI] knowledge desta session")),
+	GenKnowledgeAll: key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("ctrl+k", "[AI] knowledge de todas")),
 	OpenDir: key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "open dir")),
 	Export:  key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "export json")),
 	Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "→ Search")),

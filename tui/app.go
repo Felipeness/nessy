@@ -211,6 +211,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusUntil = time.Now().Add(3 * time.Second)
 		return m, nil
 
+	case aiGeneratedMsg:
+		// Geração assíncrona terminou — recarrega state da aiView
+		m.ai.genStatus = ""
+		m.ai.reload()
+		if msg.err != nil {
+			m.status = "ai " + msg.kind + " erro: " + msg.err.Error()
+		} else {
+			m.status = "ai " + msg.kind + " ✓"
+		}
+		m.statusUntil = time.Now().Add(4 * time.Second)
+		return m, nil
+
 	case tea.KeyMsg:
 		k := msg.String()
 
@@ -300,6 +312,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.Fuzzy):
 			if m.activeTab == tabSearch {
 				m.search.ToggleFuzzy()
+			}
+			return m, nil
+		// AI tab actions — só fazem algo quando estamos no tab AI
+		case keyMatches(k, keys.GenSummaries):
+			if m.activeTab == tabAI {
+				return m, m.ai.enqueueAllSummariesCmd()
+			}
+			return m, nil
+		case keyMatches(k, keys.GenClusters):
+			if m.activeTab == tabAI {
+				return m, m.ai.genClustersCmd()
+			}
+			return m, nil
+		case keyMatches(k, keys.GenInsights):
+			if m.activeTab == tabAI {
+				return m, m.ai.genInsightsCmd()
+			}
+			return m, nil
+		case keyMatches(k, keys.GenProfile):
+			if m.activeTab == tabAI {
+				return m, m.ai.genProfileCmd()
+			}
+			return m, nil
+		case keyMatches(k, keys.GenKnowledge):
+			if m.activeTab == tabAI {
+				return m, m.ai.genKnowledgeCmd(m.recent.selected())
+			}
+			return m, nil
+		case keyMatches(k, keys.GenKnowledgeAll):
+			if m.activeTab == tabAI {
+				return m, m.ai.genKnowledgeAllCmd()
 			}
 			return m, nil
 		case keyMatches(k, keys.Stats):
@@ -511,7 +554,7 @@ Pressiona qualquer tecla pra fechar.`
 func isGlobalKey(k string) bool {
 	switch k {
 	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o",
-		"ctrl+e", "ctrl+t", "ctrl+y", "ctrl+f", "ctrl+b",
+		"ctrl+e", "ctrl+t", "ctrl+y", "ctrl+k", "ctrl+f", "ctrl+b",
 		"up", "down", "home", "end", "pgup", "pgdown":
 		// Setas + Ctrl+* nunca são caracteres digitáveis, então sempre
 		// passam por cima da input pra navegar/atalhos globais funcionarem

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/felipeness/claude-history/internal/ai"
 	"github.com/felipeness/claude-history/internal/index"
@@ -31,6 +32,16 @@ type aiView struct {
 	profile    string
 	knowledge  map[string]*index.Knowledge
 	aggregated *ai.KnowledgeAggregate
+	// status mostrado no header da AI tab quando há geração em andamento.
+	// Limpo quando a próxima reload acontece.
+	genStatus string
+}
+
+// aiGeneratedMsg dispara quando uma geração assíncrona termina — main.go
+// trata e dá reload da aiView.
+type aiGeneratedMsg struct {
+	kind string // "insights" | "profile" | "knowledge" | "knowledge_all" | "clusters"
+	err  error
 }
 
 func newAIView(enabled bool, client *ai.Client, worker *ai.Worker, genModel, embedModel string, db *index.DB, sessions []*model.Session) aiView {
@@ -95,6 +106,12 @@ func (v aiView) View(width int, selected *model.Session) string {
 	}
 	fmt.Fprintln(&b, header.Render(fmt.Sprintf("🤖 Ollama %s · %s · %d/%d cached · queue: %d",
 		statusStr, v.genModel, cached, len(v.sessions), queued)))
+	if v.genStatus != "" {
+		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("  "+v.genStatus))
+	}
+	fmt.Fprintln(&b, muted.Render(
+		"  [S] summaries  [C] clusters  [I] insights  [P] profile  [K] knowledge  [ctrl+k] knowledge-all",
+	))
 	if !reachable {
 		fmt.Fprintln(&b, lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(
 			"Ollama não responde. Rode `ollama serve` e baixe os modelos:"))
@@ -238,6 +255,116 @@ func (v aiView) View(width int, selected *model.Session) string {
 	}
 
 	return lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
+}
+
+// reload re-lê tudo do db. Chamado depois que uma geração assíncrona termina.
+func (v *aiView) reload() {
+	if v.db == nil {
+		return
+	}
+	v.caches = map[string]*index.AICache{}
+	if all, err := v.db.AICacheList(); err == nil {
+		for _, c := range all {
+			v.caches[c.SessionID] = c
+		}
+	}
+	v.insights, _ = v.db.InsightsList()
+	v.profile, _, _ = v.db.ProfileGet()
+	v.knowledge = map[string]*index.Knowledge{}
+	if ks, err := v.db.KnowledgeList(); err == nil {
+		for _, k := range ks {
+			v.knowledge[k.SessionID] = k
+		}
+	}
+	v.aggregated, _ = ai.AggregateKnowledge(v.db)
+}
+
+// genCmd*  — tea.Cmds que rodam geração em goroutine e enviam aiGeneratedMsg.
+// Usadas pelo Update handler em app.go quando user aperta atalhos S/C/I/P/K.
+
+func (v *aiView) genInsightsCmd() tea.Cmd {
+	if v.client == nil || v.db == nil {
+		return nil
+	}
+	v.genStatus = "⚡ gerando insights…"
+	db := v.db
+	client := v.client
+	model := v.genModel
+	return func() tea.Msg {
+		_, err := ai.GenerateInsights(context.Background(), db, client, model)
+		return aiGeneratedMsg{kind: "insights", err: err}
+	}
+}
+
+func (v *aiView) genProfileCmd() tea.Cmd {
+	if v.client == nil || v.db == nil {
+		return nil
+	}
+	v.genStatus = "⚡ gerando profile…"
+	db := v.db
+	client := v.client
+	model := v.genModel
+	return func() tea.Msg {
+		_, err := ai.GenerateProfile(context.Background(), db, client, model)
+		return aiGeneratedMsg{kind: "profile", err: err}
+	}
+}
+
+func (v *aiView) genKnowledgeCmd(sess *model.Session) tea.Cmd {
+	if v.client == nil || v.db == nil || sess == nil {
+		return nil
+	}
+	v.genStatus = fmt.Sprintf("⚡ gerando knowledge de %s…", sess.SessionID[:8])
+	db := v.db
+	client := v.client
+	model := v.genModel
+	return func() tea.Msg {
+		_, err := ai.GenerateKnowledge(context.Background(), db, client, model, sess)
+		return aiGeneratedMsg{kind: "knowledge", err: err}
+	}
+}
+
+func (v *aiView) genKnowledgeAllCmd() tea.Cmd {
+	if v.client == nil || v.db == nil {
+		return nil
+	}
+	v.genStatus = "⚡ gerando knowledge de todas sessions (pode levar minutos)…"
+	db := v.db
+	client := v.client
+	model := v.genModel
+	return func() tea.Msg {
+		_, _, err := ai.GenerateKnowledgeAll(context.Background(), db, client, model)
+		return aiGeneratedMsg{kind: "knowledge_all", err: err}
+	}
+}
+
+func (v *aiView) genClustersCmd() tea.Cmd {
+	if v.client == nil || v.db == nil {
+		return nil
+	}
+	v.genStatus = "⚡ recomputando clusters…"
+	db := v.db
+	client := v.client
+	model := v.genModel
+	return func() tea.Msg {
+		_, err := ai.RecomputeClusters(context.Background(), db, client, model)
+		return aiGeneratedMsg{kind: "clusters", err: err}
+	}
+}
+
+func (v *aiView) enqueueAllSummariesCmd() tea.Cmd {
+	if v.worker == nil || v.db == nil {
+		return nil
+	}
+	v.genStatus = "⚡ enfileirando summaries de todas sessions…"
+	w := v.worker
+	all, _ := v.db.ListSessions()
+	return func() tea.Msg {
+		for _, s := range all {
+			w.Enqueue(s.SessionID)
+		}
+		return aiGeneratedMsg{kind: "summaries"}
+	}
 }
 
 // renderKnowledgeTUI imprime o card de Knowledge de uma session: problem,
