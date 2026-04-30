@@ -36,6 +36,8 @@ USAGE:
   claude-history tui                    TUI Bubble Tea com tabs Search/Recent/Stats
   claude-history serve [--port N]       sobe Web UI local em http://localhost:5555
   claude-history statusline-render      consome stdin do Claude Code, escreve linha ANSI
+  claude-history statusline-install     escreve statusLine no ~/.claude/settings.json
+  claude-history statusline-preview     mostra o statusline com mock data no terminal
 
 EXAMPLES:
   claude-history list
@@ -62,6 +64,10 @@ func main() {
 		cmdServe(os.Args[2:])
 	case "statusline-render":
 		cmdStatuslineRender()
+	case "statusline-install":
+		cmdStatuslineInstall(os.Args[2:])
+	case "statusline-preview":
+		cmdStatuslinePreview(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -575,4 +581,197 @@ func cmdStatuslineRender() {
 
 	out := statusline.Render(&in, cfg)
 	fmt.Println(out)
+}
+
+// cmdStatuslineInstall escreve a entrada statusLine no settings.json e cria
+// o config TOML default em ~/.claude-history/statusline.toml.
+//
+// Flags:
+//   --preset <name>      compact | max | powerline (default compact)
+//   --refresh <seconds>  1-60 pra interval-driven (default event-driven)
+//   --force              sobrescreve statusLine existente sem perguntar
+//   --uninstall          remove a entrada statusLine
+func cmdStatuslineInstall(args []string) {
+	preset := "compact"
+	refresh := 0
+	force := false
+	uninstall := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--preset":
+			if i+1 < len(args) {
+				preset = args[i+1]
+				i++
+			}
+		case "--refresh":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					refresh = n
+				}
+				i++
+			}
+		case "--force", "-f":
+			force = true
+		case "--uninstall":
+			uninstall = true
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal(err)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	if uninstall {
+		removed, backup, err := statusline.Uninstall(settingsPath)
+		if err != nil {
+			fatal(err)
+		}
+		if !removed {
+			fmt.Println("settings.json não tinha statusLine — nada a remover")
+			return
+		}
+		fmt.Printf("✓ statusLine removido de %s\n", settingsPath)
+		fmt.Printf("  backup: %s\n", backup)
+		return
+	}
+
+	// Resolve binary path absoluto pra colocar no command
+	self, err := os.Executable()
+	if err != nil {
+		fatal(err)
+	}
+	cmd := self + " statusline-render"
+
+	// Escreve config TOML default se não existir
+	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		cfg := statusline.Presets[preset]
+		if cfg == nil {
+			cfg = statusline.DefaultConfig()
+		}
+		if err := statusline.SaveConfig(cfgPath, cfg); err != nil {
+			fatal(fmt.Errorf("save config: %w", err))
+		}
+		fmt.Printf("✓ config criado em %s (preset: %s)\n", cfgPath, preset)
+	} else {
+		fmt.Printf("✓ config já existe em %s — preservado\n", cfgPath)
+	}
+
+	res, err := statusline.Install(statusline.InstallOptions{
+		SettingsPath:    settingsPath,
+		Command:         cmd,
+		RefreshInterval: refresh,
+		Force:           force,
+	})
+	if err != nil {
+		fatal(err)
+	}
+	if res.Backup != "" {
+		fmt.Printf("✓ backup: %s\n", res.Backup)
+	}
+	if res.Replaced {
+		fmt.Println("⚠ statusLine anterior foi sobrescrito")
+	}
+	fmt.Printf("✓ statusLine instalado em %s\n", settingsPath)
+	fmt.Printf("  command: %s\n", cmd)
+	if refresh > 0 {
+		fmt.Printf("  refresh: %ds\n", refresh)
+	}
+	fmt.Println()
+	fmt.Println("Próximos passos:")
+	fmt.Println("  1. Suba o daemon (em outra aba):  claude-history serve --no-open")
+	fmt.Println("  2. Reinicie o Claude Code         (statusLine só carrega no boot)")
+	fmt.Println("  3. Edite o config em:             " + cfgPath)
+}
+
+// cmdStatuslinePreview renderiza o statusline com dados mock pra ver no terminal.
+// Útil pra testar themes/components sem precisar reiniciar Claude Code.
+//
+// Flags:
+//   --theme <name>     graphite|nord|dracula|sakura|mono
+//   --style <name>     plain|powerline|capsule
+//   --all              renderiza TODAS combinações theme×style
+func cmdStatuslinePreview(args []string) {
+	theme := ""
+	style := ""
+	all := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--theme":
+			if i+1 < len(args) {
+				theme = args[i+1]
+				i++
+			}
+		case "--style":
+			if i+1 < len(args) {
+				style = args[i+1]
+				i++
+			}
+		case "--all":
+			all = true
+		}
+	}
+
+	mock := mockInput()
+	home, _ := os.UserHomeDir()
+	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	cfg, _ := statusline.LoadConfig(cfgPath)
+
+	if all {
+		styles := []string{"plain", "powerline", "capsule"}
+		themes := []string{"graphite", "nord", "dracula", "sakura", "mono"}
+		for _, t := range themes {
+			for _, st := range styles {
+				cfg.Theme = t
+				cfg.Style = st
+				fmt.Printf("─ %s · %s\n", t, st)
+				fmt.Println(statusline.Render(mock, cfg))
+				fmt.Println()
+			}
+		}
+		return
+	}
+	if theme != "" {
+		cfg.Theme = theme
+	}
+	if style != "" {
+		cfg.Style = style
+	}
+	fmt.Println(statusline.Render(mock, cfg))
+}
+
+// mockInput devolve um Input plausível pra preview/testes.
+func mockInput() *statusline.Input {
+	return &statusline.Input{
+		CWD:       "/Users/dev/projects/my-app",
+		SessionID: "preview-mock",
+		Model: statusline.ModelInfo{
+			DisplayName: "Opus 4.7",
+			ID:          "claude-opus-4-7",
+		},
+		Workspace: statusline.Workspace{
+			CurrentDir: "/Users/dev/projects/my-app",
+			ProjectDir: "/Users/dev/projects/my-app",
+		},
+		Context: func() statusline.ContextWindow {
+			c := statusline.ContextWindow{
+				UsedPercentage:    42,
+				TotalInputTokens:  18432,
+				TotalOutputTokens: 4521,
+			}
+			return c
+		}(),
+		Cost: statusline.CostInfo{
+			TotalCostUSD:      0.32,
+			TotalLinesAdded:   45,
+			TotalLinesRemoved: 12,
+		},
+		RateLimits: &statusline.RateLimits{
+			FiveHour: &statusline.RateLimitWindow{UsedPercentage: 73, ResetsAt: 0},
+			SevenDay: &statusline.RateLimitWindow{UsedPercentage: 18},
+		},
+		Worktree: &statusline.WorktreeInfo{Branch: "feat/CC-1234-statusline"},
+	}
 }
