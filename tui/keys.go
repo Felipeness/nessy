@@ -19,6 +19,7 @@ type keymap struct {
 	Help    key.Binding
 	Quit    key.Binding
 	Group   key.Binding
+	Expand  key.Binding
 	Stats   key.Binding
 	OpenDir key.Binding
 	Export  key.Binding
@@ -49,6 +50,7 @@ var keys = keymap{
 	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:    key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "quit")),
 	Group:   key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "group toggle")),
+	Expand:  key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "expand/collapse search hits")),
 	Stats:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats toggle")),
 	OpenDir: key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("ctrl+o", "open dir")),
 	Export:  key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "export json")),

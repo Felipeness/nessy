@@ -292,6 +292,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.recent.groupByProject = !m.recent.groupByProject
 			}
 			return m, nil
+		case keyMatches(k, keys.Expand):
+			if m.activeTab == tabSearch {
+				m.search.ToggleExpand()
+			}
+			return m, nil
 		case keyMatches(k, keys.Stats):
 			if m.activeTab == tabStats && m.width < wideCols {
 				m.stats.showLocal = !m.stats.showLocal
