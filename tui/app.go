@@ -63,7 +63,15 @@ type Model struct {
 	ai          aiView
 	aiClient    *ai.Client
 	aiWorker    *ai.Worker
+
+	// pendingResume é setado quando user pressiona Enter — main.go executa
+	// `claude --resume` depois de prog.Run() retornar. Evita race com
+	// tea.Quit terminando o subprocess antes dele herdar o TTY.
+	pendingResume *model.Session
 }
+
+// PendingResume devolve a session que o user quis retomar (nil se nenhuma).
+func (m Model) PendingResume() *model.Session { return m.pendingResume }
 
 // AIDeps agrupa client e worker de AI (opcionais — nil se desabilitado).
 type AIDeps struct {
@@ -89,7 +97,7 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		}
 	}
 
-	recent := newRecentView(sessions, p)
+	recent := newRecentView(sessions, p, loadSummaries(db))
 	recent.groupByProject = state.RecentGroupByProject
 
 	search := newSearchView(db, p, sessions)
@@ -140,13 +148,29 @@ func (m Model) currentState() *config.State {
 	}
 }
 
+// loadSummaries lê AICacheList do db e devolve session_id → summary.
+// Erros silenciados — recent ainda funciona com fallback FirstUserMsg.
+func loadSummaries(db *index.DB) map[string]string {
+	out := map[string]string{}
+	caches, err := db.AICacheList()
+	if err != nil {
+		return out
+	}
+	for _, c := range caches {
+		if c.Summary != "" {
+			out[c.SessionID] = c.Summary
+		}
+	}
+	return out
+}
+
 // Init satisfies tea.Model.
 func (m Model) Init() tea.Cmd { return m.spin.Tick }
 
 func (m *Model) reload() {
 	sessions, _ := m.db.ListSessions()
 	m.detailCtx = newDetailContext(sessions, m.pricing)
-	m.recent = newRecentView(sessions, m.pricing)
+	m.recent = newRecentView(sessions, m.pricing, loadSummaries(m.db))
 	m.search = newSearchView(m.db, m.pricing, sessions)
 	m.stats = newStatsView(sessions, m.pricing)
 	m.costs = newCostsView(sessions, m.pricing)
@@ -280,7 +304,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.Enter):
 			s := m.selectedForActiveTab()
 			if s != nil {
-				return m, tea.Batch(tea.ExitAltScreen, resumeCmd(s), tea.Quit)
+				m.pendingResume = s
+				return m, tea.Quit
 			}
 			return m, nil
 		case keyMatches(k, keys.OpenDir):

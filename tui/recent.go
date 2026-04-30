@@ -19,15 +19,41 @@ const (
 type recentView struct {
 	sessions       []*model.Session
 	pricing        *pricing.Pricing
+	summaries      map[string]string // session_id → AI summary, populado quando AI tá ativo
 	cursor         int
 	groupByProject bool
 }
 
-func newRecentView(sessions []*model.Session, p *pricing.Pricing) recentView {
+func newRecentView(sessions []*model.Session, p *pricing.Pricing, summaries map[string]string) recentView {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].EndTime.After(sessions[j].EndTime)
 	})
-	return recentView{sessions: sessions, pricing: p}
+	return recentView{sessions: sessions, pricing: p, summaries: summaries}
+}
+
+// titleFor escolhe o melhor "nome" pra mostrar primeiro: AI summary se
+// existir, senão primeira user msg, senão "(sem mensagens)".
+func (v recentView) titleFor(s *model.Session) string {
+	if v.summaries != nil {
+		if sum, ok := v.summaries[s.SessionID]; ok && sum != "" {
+			return firstSentence(sum)
+		}
+	}
+	if s.FirstUserMsg != "" {
+		return s.FirstUserMsg
+	}
+	return "(sem mensagens)"
+}
+
+// firstSentence pega o primeiro período da summary (até "." ou "\n"),
+// pra encurtar pra title de 1 linha.
+func firstSentence(s string) string {
+	for _, sep := range []string{"\n", ". ", " — "} {
+		if i := strings.Index(s, sep); i > 0 && i < 200 {
+			return strings.TrimSpace(s[:i])
+		}
+	}
+	return s
 }
 
 func (v recentView) selected() *model.Session {
@@ -57,13 +83,55 @@ func (v recentView) viewByTime(width int) string {
 			fmt.Fprintf(&b, "─── %s ─────────────\n", bucket)
 			lastBucket = bucket
 		}
-		marker := " "
-		if i == v.cursor {
-			marker = "▶"
-		}
-		fmt.Fprintf(&b, "%s %s\n", marker, formatDenseRow(s, v.pricing, now, width-2))
+		writeRecentEntry(&b, s, v, now, width, i == v.cursor)
 	}
 	return b.String()
+}
+
+// writeRecentEntry renderiza uma session em 2 linhas:
+//   ▶ 🟢 Implementing statusline studio with drag-drop
+//        16:34 · 41m · Opus · 1.2M · $4.32 · ~/Desktop/projects/claude-history
+//
+// Linha 1: title (AI summary > FirstUserMsg) — destaque cromado quando
+// for o cursor. Linha 2: metadata em muted.
+func writeRecentEntry(b *strings.Builder, s *model.Session, v recentView, now time.Time, width int, selected bool) {
+	icon := activityIcon(now.Sub(s.EndTime))
+	marker := "  "
+	if selected {
+		marker = "▶ "
+	}
+	title := v.titleFor(s)
+	titleMax := width - 6
+	if len(title) > titleMax && titleMax > 10 {
+		title = title[:titleMax-1] + "…"
+	}
+	titleStyled := title
+	if selected {
+		titleStyled = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(title)
+	}
+	fmt.Fprintf(b, "%s%s %s\n", marker, icon, titleStyled)
+
+	// Linha 2: meta em muted
+	dur := fmtDuration(s.Duration())
+	badge := ModelBadge(s.Model)
+	tokens := fmtTokens(s.TotalTokens())
+	cost := "?"
+	if v.pricing != nil {
+		if c, ok := v.pricing.Cost(s); ok {
+			cost = fmt.Sprintf("$%.2f", c.USD)
+		}
+	}
+	dir := truncatePath(s.ProjectDir, 40)
+	branch := ""
+	if s.GitBranch != "" {
+		branch = " · " + s.GitBranch
+	}
+	meta := fmt.Sprintf("%s · %s · %s · %s · %s · %s%s",
+		s.EndTime.Local().Format("Mon 15:04"),
+		dur, badge, tokens, cost, dir, branch,
+	)
+	muted := lipgloss.NewStyle().Foreground(colorMuted).Render(meta)
+	fmt.Fprintf(b, "     %s\n", muted)
 }
 
 func (v recentView) viewByProject(width int) string {

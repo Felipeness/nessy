@@ -375,8 +375,17 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	}
 
 	prog := tea.NewProgram(tui.New(db, p, cfg, state, statePath, aiDeps), tea.WithAltScreen())
-	if _, err := prog.Run(); err != nil {
+	finalModel, err := prog.Run()
+	if err != nil {
 		fatal(err)
+	}
+	// Se user apertou Enter pra retomar uma session, executa AGORA — depois
+	// que Bubble Tea liberou o TTY. Bubble Tea + subprocess simultâneos
+	// brigavam pelo terminal e o claude --resume saía vazio.
+	if final, ok := finalModel.(tui.Model); ok {
+		if s := final.PendingResume(); s != nil {
+			resume(s.ProjectDir, s.SessionID)
+		}
 	}
 }
 
