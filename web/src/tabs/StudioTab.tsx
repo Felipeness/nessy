@@ -162,7 +162,12 @@ export function StudioTab() {
     <div className="grid grid-cols-[420px_1fr] gap-4 h-full p-4">
       {/* LEFT — config panel */}
       <div className="overflow-auto space-y-4 pr-2">
-        <Section title="Theme">
+        <HelpSection />
+
+        <Section
+          title="Theme"
+          help="Cores aplicadas em cada component. Cada theme define BG/FG por component + 3 cores de severity (verde/amarelo/vermelho)."
+        >
           <div className="grid grid-cols-3 gap-2">
             {themesResp.themes.map((t) => (
               <ThemeCard
@@ -175,7 +180,10 @@ export function StudioTab() {
           </div>
         </Section>
 
-        <Section title="Style">
+        <Section
+          title="Style"
+          help="Como os components ficam visualmente: plain (separator simples), powerline (pílulas com transição — precisa Nerd Font pro arrow ), capsule (pílulas independentes com bordas arredondadas)."
+        >
           <div className="flex gap-2">
             {themesResp.styles.map((s) => (
               <button
@@ -186,6 +194,7 @@ export function StudioTab() {
                     ? 'bg-[var(--color-accent)] text-black border-[var(--color-accent)]'
                     : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
                 }`}
+                title={styleDescription(s)}
               >
                 {s}
               </button>
@@ -195,6 +204,7 @@ export function StudioTab() {
 
         <Section
           title="Lines"
+          help="Cada linha vira uma linha visual no statusline. Arraste os chips pra reordenar. Click no ⚙ pra editar thresholds (warn/critical) de components que reagem com cor."
           right={
             <button
               onClick={() =>
@@ -232,7 +242,10 @@ export function StudioTab() {
           </div>
         </Section>
 
-        <Section title="Resetar pra preset">
+        <Section
+          title="Resetar pra preset"
+          help="Presets prontos pra começar. compact = 1 linha enxuta. max = 2 linhas com tudo. powerline = estilo pílulas."
+        >
           <div className="flex gap-2 flex-wrap">
             {presetNames.map((name) => (
               <button
@@ -265,14 +278,19 @@ export function StudioTab() {
 
       {/* RIGHT — preview */}
       <div className="space-y-3">
-        <Section title="Preview live">
+        <Section
+          title="Preview live"
+          help="Renderizado pelo engine Go (single source of truth). Frontend só envia config + mock e exibe HTML. Mesmo render que o Claude Code vê."
+        >
           <div className="bg-black rounded p-4 font-mono text-sm overflow-x-auto">
             <AnsiPreview html={previewHTML} />
           </div>
           <div className="mt-2 text-xs text-[var(--color-muted)]">
-            Edite os valores em "Mock data" abaixo pra simular cenários.
+            Edite os valores em "Mock data" abaixo pra simular cenários (ex: context 90%, cost 3×p90).
           </div>
         </Section>
+
+        <SeverityLegend />
 
         <Section
           title="Mock data"
@@ -383,24 +401,133 @@ function presetDescription(name: string): string {
 
 function Section({
   title,
+  help,
   right,
   children,
 }: {
   title: string
+  help?: string
   right?: React.ReactNode
   children: React.ReactNode
 }) {
+  const [showHelp, setShowHelp] = useState(false)
   return (
     <section className="border border-[var(--color-border)] rounded p-3">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)] font-bold">
+        <h2 className="text-xs uppercase tracking-wide text-[var(--color-muted)] font-bold flex items-center gap-1.5">
           {title}
+          {help && (
+            <button
+              onClick={() => setShowHelp((v) => !v)}
+              className="w-3.5 h-3.5 rounded-full border border-[var(--color-border)] text-[10px] leading-none text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] flex items-center justify-center font-normal"
+              title="explicação"
+            >
+              ?
+            </button>
+          )}
         </h2>
         {right}
       </div>
+      {showHelp && help && (
+        <div className="text-[10px] text-[var(--color-muted)] mb-2 leading-relaxed border-l-2 border-[var(--color-accent)] pl-2">
+          {help}
+        </div>
+      )}
       {children}
     </section>
   )
+}
+
+// HelpSection — explicação geral expansível no topo do Studio.
+function HelpSection() {
+  const [open, setOpen] = useState(false)
+  return (
+    <section className="border border-[var(--color-accent)]/40 rounded p-3 bg-[var(--color-accent)]/5">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full text-left flex items-center justify-between text-xs"
+      >
+        <span className="font-bold">📖 Como funciona o Studio</span>
+        <span className="text-[var(--color-muted)]">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="mt-3 text-[11px] text-[var(--color-muted)] space-y-2 leading-relaxed">
+          <p>
+            <strong className="text-[var(--color-fg)]">O que é o statusline?</strong> A linha que
+            o Claude Code mostra acima do prompt. Por padrão tem só{' '}
+            <code>branch · model · mode</code>. Aqui você customiza pra mostrar cost, context %,
+            burn rate, ticket, cluster, etc.
+          </p>
+          <p>
+            <strong className="text-[var(--color-fg)]">Como o claude-history se pluga.</strong>{' '}
+            O Claude Code chama um binário a cada turno passando JSON via stdin. O nosso{' '}
+            <code>statusline-render</code> lê esse JSON, consulta o daemon (cost histórico, p90,
+            cluster), aplica seu config TOML e devolve uma linha ANSI colorida.
+          </p>
+          <p>
+            <strong className="text-[var(--color-fg)]">O que você faz aqui.</strong> Compõe a
+            linha arrastando components, escolhe theme/style, ajusta thresholds (warn/critical) e
+            simula cenários no Mock Data pra ver como ficaria. Salvar grava em{' '}
+            <code>~/.claude-history/statusline.toml</code>.
+          </p>
+          <p>
+            <strong className="text-[var(--color-fg)]">Pra plugar de verdade no Claude Code:</strong>{' '}
+            <code>claude-history statusline-install --preset compact</code> (ou max/powerline) →
+            reiniciar o Claude Code (statusLine só carrega no boot).
+          </p>
+          <p>
+            <strong className="text-[var(--color-fg)]">Engine único.</strong> Render é em Go.
+            Studio web só envia <code>config + mock</code> via POST e exibe HTML pronto. O que
+            aparece aqui é exatamente o que o Claude Code vai ver.
+          </p>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// SeverityLegend — explica as 3 cores que vários components usam.
+function SeverityLegend() {
+  return (
+    <Section
+      title="Cores de severity"
+      help="Components com has_warn_at: true reagem com cor. Edite os thresholds clicando no ⚙ do chip."
+    >
+      <div className="flex gap-3 text-[11px]">
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-green-400" />
+          <span className="text-[var(--color-muted)]">
+            <strong className="text-[var(--color-fg)]">OK</strong> — valor &lt; warn_at
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-amber-400" />
+          <span className="text-[var(--color-muted)]">
+            <strong className="text-[var(--color-fg)]">Warn</strong> — entre warn e critical
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-red-400" />
+          <span className="text-[var(--color-muted)]">
+            <strong className="text-[var(--color-fg)]">Crit</strong> — ≥ critical_at
+          </span>
+        </div>
+      </div>
+    </Section>
+  )
+}
+
+function styleDescription(s: string): string {
+  switch (s) {
+    case 'plain':
+      return 'Components separados por │ — funciona em qualquer terminal'
+    case 'powerline':
+      return 'Pílulas com transição de cor entre segments. Precisa Nerd Font pro arrow '
+    case 'capsule':
+      return 'Pílulas independentes com bordas arredondadas. Precisa Nerd Font'
+    default:
+      return s
+  }
 }
 
 function rgb(c: { r: number; g: number; b: number }) {
@@ -499,6 +626,8 @@ function LineEditor({
                   key={name}
                   name={name}
                   label={meta?.label ?? name}
+                  description={meta?.description ?? ''}
+                  needsHistory={meta?.needs_history ?? false}
                   hasWarnAt={meta?.has_warn_at ?? false}
                   onEditThreshold={() => onEditThreshold(name)}
                   onRemove={() =>
@@ -535,12 +664,16 @@ function LineEditor({
 function SortableChip({
   name,
   label,
+  description,
+  needsHistory,
   hasWarnAt,
   onEditThreshold,
   onRemove,
 }: {
   name: string
   label: string
+  description: string
+  needsHistory: boolean
   hasWarnAt: boolean
   onEditThreshold: () => void
   onRemove: () => void
@@ -553,14 +686,18 @@ function SortableChip({
     transition,
     opacity: isDragging ? 0.5 : 1,
   }
+  const tooltip =
+    description + (needsHistory ? '\n\n⚠ requer daemon claude-history ativo' : '')
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
+      title={tooltip}
       className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-card)] border border-[var(--color-border)] text-xs cursor-grab active:cursor-grabbing"
     >
+      {needsHistory && <span className="text-amber-400 text-[10px]" title="requer daemon">⚡</span>}
       <span>{label}</span>
       {hasWarnAt && (
         <button
