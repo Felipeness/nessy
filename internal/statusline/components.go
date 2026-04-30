@@ -57,8 +57,9 @@ var componentMetas = map[string]ComponentMeta{
 	"burn_rate":     {Name: "burn_rate", Label: "Burn rate", Category: "cost", Description: "Tokens/min — requer daemon", NeedsHist: true, HasWarnAt: true},
 	"cost_today":    {Name: "cost_today", Label: "Cost hoje", Category: "cost", Description: "Soma do dia inteiro — requer daemon", NeedsHist: true},
 	"cost_month":    {Name: "cost_month", Label: "Cost mês", Category: "cost", Description: "Acumulado + projeção — requer daemon", NeedsHist: true},
-	"rate_5h":       {Name: "rate_5h", Label: "Rate 5h", Category: "limits", Description: "% do bloco de 5h + countdown", HasWarnAt: true},
-	"rate_7d":       {Name: "rate_7d", Label: "Rate 7d", Category: "limits", Description: "% do bloco semanal", HasWarnAt: true},
+	"rate_5h":       {Name: "rate_5h", Label: "Rate 5h", Category: "limits", Description: "Bar + % do bloco de 5h + countdown (compact)", HasWarnAt: true},
+	"rate_7d":       {Name: "rate_7d", Label: "Rate 7d", Category: "limits", Description: "Bar + % do bloco semanal + countdown", HasWarnAt: true},
+	"session_block": {Name: "session_block", Label: "Session block", Category: "limits", Description: "Bar grande + reset countdown destacado pro bloco de 5h", HasWarnAt: true},
 	"ticket":        {Name: "ticket", Label: "Ticket", Category: "git", Description: "Auto-extrai TICKET-NNNN da branch"},
 	"cluster":       {Name: "cluster", Label: "Cluster AI", Category: "history", Description: "Label do cluster AI desse projeto — requer daemon", NeedsHist: true},
 	"vim_mode":      {Name: "vim_mode", Label: "Vim mode", Category: "system", Description: "NORMAL/INSERT (se vim ativado)"},
@@ -419,11 +420,12 @@ func (rate5hComp) Render(c *RenderCtx, opts ComponentOpts) Segment {
 		return Segment{}
 	}
 	sev := Classify(w.UsedPercentage, opts.WarnAt, opts.CriticalAt)
-	text := fmt.Sprintf("5h %.0f%%", w.UsedPercentage)
+	bar := progressBar(w.UsedPercentage, 6)
+	text := fmt.Sprintf("5h %s %.0f%%", bar, w.UsedPercentage)
 	if w.ResetsAt > 0 {
 		left := time.Until(time.Unix(w.ResetsAt, 0))
 		if left > 0 {
-			text += fmt.Sprintf(" (%s)", humanDur(left))
+			text += fmt.Sprintf(" %s", humanDur(left))
 		}
 	}
 	seg := c.Theme.SegOf("rate_5h")
@@ -446,13 +448,53 @@ func (rate7dComp) Render(c *RenderCtx, opts ComponentOpts) Segment {
 		return Segment{}
 	}
 	sev := Classify(w.UsedPercentage, opts.WarnAt, opts.CriticalAt)
-	text := fmt.Sprintf("7d %.0f%%", w.UsedPercentage)
+	bar := progressBar(w.UsedPercentage, 6)
+	text := fmt.Sprintf("7d %s %.0f%%", bar, w.UsedPercentage)
+	if w.ResetsAt > 0 {
+		left := time.Until(time.Unix(w.ResetsAt, 0))
+		if left > 0 {
+			text += fmt.Sprintf(" %s", humanDur(left))
+		}
+	}
 	seg := c.Theme.SegOf("rate_7d")
 	fg := seg.FG
 	if sev != SevOK {
 		fg = c.Theme.SeverityFG(sev)
 	}
 	return Segment{Name: "rate_7d", Text: text, FG: fg, BG: seg.BG}
+}
+
+// session_block destaca o bloco de 5h (Pro/Max billing) como elemento
+// principal — bar maior, prefix "session", arrow → no countdown.
+type sessionBlockComp struct{}
+
+func (sessionBlockComp) Name() string { return "session_block" }
+func (sessionBlockComp) Render(c *RenderCtx, opts ComponentOpts) Segment {
+	if c.In.RateLimits == nil || c.In.RateLimits.FiveHour == nil {
+		return Segment{}
+	}
+	w := c.In.RateLimits.FiveHour
+	if w.UsedPercentage == 0 && w.ResetsAt == 0 {
+		return Segment{}
+	}
+	sev := Classify(w.UsedPercentage, opts.WarnAt, opts.CriticalAt)
+	bar := progressBar(w.UsedPercentage, 8)
+	text := fmt.Sprintf("session %s %.0f%%", bar, w.UsedPercentage)
+	if w.ResetsAt > 0 {
+		left := time.Until(time.Unix(w.ResetsAt, 0))
+		if left > 0 {
+			text += fmt.Sprintf(" → %s", humanDur(left))
+		}
+	}
+	seg := c.Theme.SegOf("session_block")
+	if seg.FG.Empty() {
+		seg = c.Theme.SegOf("rate_5h")
+	}
+	fg := seg.FG
+	if sev != SevOK {
+		fg = c.Theme.SeverityFG(sev)
+	}
+	return Segment{Name: "session_block", Text: text, FG: fg, BG: seg.BG}
 }
 
 func humanDur(d time.Duration) string {
@@ -592,6 +634,7 @@ func init() {
 	Register(costMonthComp{})
 	Register(rate5hComp{})
 	Register(rate7dComp{})
+	Register(sessionBlockComp{})
 	Register(ticketComp{})
 	Register(clusterComp{})
 	Register(vimComp{})
