@@ -143,6 +143,26 @@ export type TabName =
   | 'ai'
   | 'compare'
   | 'studio'
+  | 'ness'
+
+export type ChatMsg = {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+export type ChatSource = {
+  session_id: string
+  similarity: number
+  summary: string
+  snippet: string
+}
+
+export type ChatResponse = {
+  response: string
+  sources: ChatSource[]
+}
+
+export type ChatTurn = ChatMsg & { sources?: ChatSource[] }
 
 export type StatuslineComponentMeta = {
   name: string

@@ -5,6 +5,8 @@ import type {
   BehaviorAdvanced,
   ClusterInfo,
   Costs,
+  ChatMsg,
+  ChatResponse,
   Insight,
   Knowledge,
   KnowledgeAggregate,
@@ -95,6 +97,8 @@ export const api = {
     post<{ status: string }>('/api/ai/knowledge/generate-all'),
   aiKnowledgeAggregated: () =>
     get<KnowledgeAggregate>('/api/ai/knowledge/aggregated'),
+  aiChat: (messages: ChatMsg[]) =>
+    postJSON<ChatResponse>('/api/ai/chat', { messages }),
   statuslineComponents: () => get<StatuslineComponentMeta[]>('/api/statusline/components'),
   statuslineThemes: () => get<StatuslineThemesResp>('/api/statusline/themes'),
   statuslineConfigGet: () => get<StatuslineConfig>('/api/statusline/config'),

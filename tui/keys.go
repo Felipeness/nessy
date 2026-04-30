@@ -38,6 +38,8 @@ type keymap struct {
 	Tab6    key.Binding
 	Tab7    key.Binding
 	Tab8    key.Binding
+	Tab9    key.Binding
+	NessClear key.Binding
 }
 
 var keys = keymap{
@@ -77,6 +79,8 @@ var keys = keymap{
 	Tab6:    key.NewBinding(key.WithKeys("6"), key.WithHelp("6", "→ Tools")),
 	Tab7:    key.NewBinding(key.WithKeys("7"), key.WithHelp("7", "→ Behavior")),
 	Tab8:    key.NewBinding(key.WithKeys("8"), key.WithHelp("8", "→ AI")),
+	Tab9:    key.NewBinding(key.WithKeys("9"), key.WithHelp("9", "→ Ness IA")),
+	NessClear: key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("ctrl+l", "[Ness] limpar conversa")),
 }
 
 func keyMatches(msgKey string, b key.Binding) bool {

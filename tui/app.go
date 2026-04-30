@@ -30,11 +30,12 @@ const (
 	tabTools
 	tabBehavior
 	tabAI
+	tabNess
 )
 
-var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior", "AI"}
+var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior", "AI", "🧠 Ness"}
 
-const numTabs = 8
+const numTabs = 9
 
 const wideCols = 120
 
@@ -61,6 +62,7 @@ type Model struct {
 	tools       toolsView
 	behavior    behaviorView
 	ai          aiView
+	ness        nessView
 	aiClient    *ai.Client
 	aiWorker    *ai.Worker
 
@@ -122,6 +124,7 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		tools:     newToolsView(sessions),
 		behavior:  newBehaviorView(sessions, p),
 		ai:        newAIView(aiDeps.Enabled, aiDeps.Client, aiDeps.Worker, aiDeps.GenModel, aiDeps.EmbedModel, db, sessions),
+		ness:      newNessView(aiDeps.Enabled, aiDeps.Client, db, aiDeps.GenModel, aiDeps.EmbedModel),
 		aiClient:  aiDeps.Client,
 		aiWorker:  aiDeps.Worker,
 	}
@@ -223,6 +226,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusUntil = time.Now().Add(4 * time.Second)
 		return m, nil
 
+	case nessChatDoneMsg:
+		m.ness.HandleDone(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		k := msg.String()
 
@@ -243,6 +250,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.input, cmd = m.search.input.Update(msg)
 			m.search.Filter(m.search.input.Value())
 			return m, cmd
+		}
+
+		// Ness tab: input recebe teclas; Enter envia, ctrl+l limpa
+		if m.activeTab == tabNess && !isGlobalKey(k) {
+			var cmd tea.Cmd
+			m.ness.input, cmd = m.ness.input.Update(msg)
+			return m, cmd
+		}
+		if m.activeTab == tabNess && k == "enter" {
+			fn := m.ness.SubmitCmd()
+			if fn == nil {
+				return m, nil
+			}
+			return m, func() tea.Msg { return fn() }
+		}
+		if m.activeTab == tabNess && keyMatches(k, keys.NessClear) {
+			m.ness.Clear()
+			return m, nil
 		}
 
 		switch {
@@ -280,6 +305,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(k, keys.Tab8):
 			m.activeTab = tabAI
+			return m, nil
+		case keyMatches(k, keys.Tab9):
+			m.activeTab = tabNess
 			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
@@ -464,6 +492,8 @@ func (m Model) tabHint() string {
 		return "n-grams · co-occurrence · style stats" + tail
 	case tabAI:
 		return "[S] summaries  [C] clusters  [I] insights  [P] profile  [K] knowledge  [ctrl+k] all" + tail
+	case tabNess:
+		return "chat com seu segundo cérebro · [enter] enviar  [ctrl+l] limpar conversa" + tail
 	}
 	return tail
 }
@@ -521,6 +551,8 @@ func (m Model) renderWide(h int) string {
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.behavior.View(m.width))
 	case tabAI:
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ai.View(m.width, m.recent.selected()))
+	case tabNess:
+		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ness.View(m.width, h))
 	}
 	return ""
 }
@@ -547,6 +579,8 @@ func (m Model) renderNarrow(h int) string {
 		return clamp.Render(m.behavior.View(m.width))
 	case tabAI:
 		return clamp.Render(m.ai.View(m.width, m.recent.selected()))
+	case tabNess:
+		return clamp.Render(m.ness.View(m.width, h))
 	}
 	return ""
 }
