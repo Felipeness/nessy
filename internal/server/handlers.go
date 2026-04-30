@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -564,69 +565,359 @@ type searchResultEntry struct {
 	Rank    float64        `json:"rank,omitempty"`
 }
 
+// handleSearch suporta 4 modos:
+//
+//   - metadata (default) — substring em path/branch/msg/summary/model/tools
+//   - fts (`:body <q>` ou mode=fts) — full-text via FTS5 sobre messages
+//   - semantic (`:sim <q>` ou mode=semantic) — cosine similarity sobre embeddings
+//
+// Filtros parseados do query (em qualquer modo):
+//
+//   project:<substr>, branch:<substr>, model:<substr>, since:<dur> (ex 7d, 24h),
+//   cost:>N, cost:<N, has:summary, has:errors
+//
+// Exemplos:
+//   "react"                        → busca substring em todos campos
+//   ":body decoder bug"            → FTS sobre conteúdo
+//   "cost:>5 since:7d react"       → cost>$5 últimos 7d com "react"
+//   "project:claude-history :sim error handling" → semantic dentro do projeto
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	mode := r.URL.Query().Get("mode")
+	modeFlag := r.URL.Query().Get("mode")
+
+	// Detect prefixes pra mode override
+	mode := modeFlag
 	if mode == "" {
 		mode = "metadata"
 	}
+	switch {
+	case strings.HasPrefix(q, ":body "):
+		mode = "fts"
+		q = strings.TrimSpace(q[6:])
+	case strings.HasPrefix(q, ":sim "):
+		mode = "semantic"
+		q = strings.TrimSpace(q[5:])
+	}
+
+	// Parse filtros do query
+	filters, residual := parseSearchFilters(q)
+	q = residual
+
 	all, err := s.sessionsAll()
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	caches, _ := s.DB.AICacheList()
+	summaryByID := map[string]string{}
+	embeddingByID := map[string][]float32{}
+	for _, c := range caches {
+		if c.Summary != "" {
+			summaryByID[c.SessionID] = c.Summary
+		}
+		if len(c.Embedding) > 0 {
+			embeddingByID[c.SessionID] = ai.DecodeEmbedding(c.Embedding)
+		}
+	}
+
+	// Aplica filtros (date, cost, project, etc) — pré-corta o universo de busca
+	candidates := s.applySearchFilters(all, filters)
+
 	resp := searchResp{Mode: mode}
 	if q == "" {
-		// retorna todas
-		for _, sess := range all {
+		for _, sess := range candidates {
 			resp.Results = append(resp.Results, searchResultEntry{Session: sess})
 		}
 		writeJSON(w, 200, resp)
 		return
 	}
-	if mode == "fts" {
-		results, err := s.DB.SearchFTS(q)
-		if err != nil {
-			results, err = s.DB.SearchLike(q)
-			if err != nil {
-				writeErr(w, 500, err.Error())
-				return
-			}
-		}
-		byID := map[string]*model.Session{}
-		for _, sess := range all {
-			byID[sess.SessionID] = sess
-		}
-		seen := map[string]bool{}
-		for _, r := range results {
-			if seen[r.SessionID] {
-				continue
-			}
-			seen[r.SessionID] = true
-			if sess, ok := byID[r.SessionID]; ok {
-				resp.Results = append(resp.Results, searchResultEntry{
-					Session: sess, Snippet: r.Snippet, Role: r.Role, Rank: r.Rank,
-				})
-			}
-		}
-	} else {
-		lower := strings.ToLower(q)
-		for _, sess := range all {
-			if metaMatch(sess, lower) {
-				resp.Results = append(resp.Results, searchResultEntry{Session: sess})
-			}
-		}
+
+	switch mode {
+	case "fts":
+		s.searchFTS(q, candidates, &resp)
+	case "semantic":
+		s.searchSemantic(r.Context(), q, candidates, embeddingByID, &resp)
+	default: // metadata
+		s.searchMetadata(q, candidates, summaryByID, &resp)
 	}
 	writeJSON(w, 200, resp)
 }
 
-func metaMatch(sess *model.Session, q string) bool {
-	for _, h := range []string{sess.ProjectDir, sess.GitBranch, sess.FirstUserMsg, sess.LastUserMsg, sess.SessionID} {
-		if strings.Contains(strings.ToLower(h), q) {
-			return true
+// searchMetadata busca substring case-insensitive em vários campos +
+// AI summary + tools usados. Devolve snippet do campo que matchou.
+func (s *Server) searchMetadata(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp) {
+	lower := strings.ToLower(q)
+	for _, sess := range sessions {
+		if hit, snippet, role := metaMatchExt(sess, lower, summaries); hit {
+			resp.Results = append(resp.Results, searchResultEntry{
+				Session: sess, Snippet: snippet, Role: role,
+			})
 		}
 	}
-	return false
+}
+
+// searchFTS faz query FTS5 e mapeia pra sessions.
+func (s *Server) searchFTS(q string, sessions []*model.Session, resp *searchResp) {
+	results, err := s.DB.SearchFTS(q)
+	if err != nil {
+		results, _ = s.DB.SearchLike(q)
+	}
+	byID := map[string]*model.Session{}
+	for _, sess := range sessions {
+		byID[sess.SessionID] = sess
+	}
+	seen := map[string]bool{}
+	for _, r := range results {
+		if seen[r.SessionID] {
+			continue
+		}
+		seen[r.SessionID] = true
+		if sess, ok := byID[r.SessionID]; ok {
+			resp.Results = append(resp.Results, searchResultEntry{
+				Session: sess, Snippet: r.Snippet, Role: r.Role, Rank: r.Rank,
+			})
+		}
+	}
+}
+
+// searchSemantic embeda a query e ranqueia sessions por cosine similarity.
+func (s *Server) searchSemantic(ctx context.Context, q string, sessions []*model.Session, embByID map[string][]float32, resp *searchResp) {
+	if !s.AIEnabled || s.AIClient == nil {
+		// fallback: vira metadata
+		s.searchMetadata(q, sessions, nil, resp)
+		return
+	}
+	queryEmb, err := s.AIClient.Embedding(ctx, "nomic-embed-text", q)
+	if err != nil || len(queryEmb) == 0 {
+		s.searchMetadata(q, sessions, nil, resp)
+		return
+	}
+	type ranked struct {
+		sess *model.Session
+		sim  float64
+	}
+	var hits []ranked
+	for _, sess := range sessions {
+		emb, ok := embByID[sess.SessionID]
+		if !ok {
+			continue
+		}
+		hits = append(hits, ranked{sess, cosineSim(queryEmb, emb)})
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].sim > hits[j].sim })
+	for i, h := range hits {
+		if i >= 30 {
+			break
+		}
+		resp.Results = append(resp.Results, searchResultEntry{
+			Session: h.sess, Rank: h.sim,
+			Snippet: fmt.Sprintf("similarity: %.2f", h.sim),
+		})
+	}
+}
+
+func cosineSim(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (sqrtF(na) * sqrtF(nb))
+}
+
+func sqrtF(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+	return math.Sqrt(x)
+}
+
+// metaMatchExt expande metaMatch pra cobrir AI summary, model, tools e
+// devolve qual campo matchou pro snippet.
+func metaMatchExt(sess *model.Session, q string, summaries map[string]string) (bool, string, string) {
+	if sess == nil {
+		return false, "", ""
+	}
+	checks := []struct {
+		field string
+		text  string
+	}{
+		{"path", sess.ProjectDir},
+		{"branch", sess.GitBranch},
+		{"first_msg", sess.FirstUserMsg},
+		{"last_msg", sess.LastUserMsg},
+		{"id", sess.SessionID},
+		{"model", sess.Model},
+	}
+	for _, c := range checks {
+		if c.text == "" {
+			continue
+		}
+		if i := strings.Index(strings.ToLower(c.text), q); i >= 0 {
+			return true, makeSnippet(c.text, i, len(q)), c.field
+		}
+	}
+	for tool := range sess.ToolCalls {
+		if strings.Contains(strings.ToLower(tool), q) {
+			return true, fmt.Sprintf("tool: %s", tool), "tool"
+		}
+	}
+	if sum := summaries[sess.SessionID]; sum != "" {
+		if i := strings.Index(strings.ToLower(sum), q); i >= 0 {
+			return true, makeSnippet(sum, i, len(q)), "summary"
+		}
+	}
+	return false, "", ""
+}
+
+// makeSnippet retorna texto curto ao redor do match com [highlight] no termo.
+func makeSnippet(text string, idx, qLen int) string {
+	if idx < 0 || idx >= len(text) {
+		return text
+	}
+	start := idx - 30
+	if start < 0 {
+		start = 0
+	}
+	end := idx + qLen + 30
+	if end > len(text) {
+		end = len(text)
+	}
+	prefix := ""
+	suffix := ""
+	if start > 0 {
+		prefix = "…"
+	}
+	if end < len(text) {
+		suffix = "…"
+	}
+	return prefix + text[start:idx] + "[" + text[idx:idx+qLen] + "]" + text[idx+qLen:end] + suffix
+}
+
+// searchFilters carrega filtros parseados do query.
+type searchFilters struct {
+	project   string
+	branch    string
+	model     string
+	since     time.Duration
+	costMin   float64
+	costMax   float64
+	hasFilter bool // pelo menos 1 filtro setado
+}
+
+// parseSearchFilters extrai `field:value` tokens. Tokens não-filtro voltam em residual.
+func parseSearchFilters(q string) (searchFilters, string) {
+	f := searchFilters{costMin: -1, costMax: -1}
+	parts := strings.Fields(q)
+	var rest []string
+	for _, p := range parts {
+		colon := strings.IndexByte(p, ':')
+		if colon < 1 {
+			rest = append(rest, p)
+			continue
+		}
+		key := strings.ToLower(p[:colon])
+		val := p[colon+1:]
+		switch key {
+		case "project":
+			f.project = strings.ToLower(val)
+			f.hasFilter = true
+		case "branch":
+			f.branch = strings.ToLower(val)
+			f.hasFilter = true
+		case "model":
+			f.model = strings.ToLower(val)
+			f.hasFilter = true
+		case "since":
+			d, err := parseDurAlias(val)
+			if err == nil {
+				f.since = d
+				f.hasFilter = true
+			} else {
+				rest = append(rest, p)
+			}
+		case "cost":
+			if strings.HasPrefix(val, ">") {
+				if n, err := strconv.ParseFloat(val[1:], 64); err == nil {
+					f.costMin = n
+					f.hasFilter = true
+					continue
+				}
+			}
+			if strings.HasPrefix(val, "<") {
+				if n, err := strconv.ParseFloat(val[1:], 64); err == nil {
+					f.costMax = n
+					f.hasFilter = true
+					continue
+				}
+			}
+			rest = append(rest, p)
+		default:
+			rest = append(rest, p)
+		}
+	}
+	return f, strings.Join(rest, " ")
+}
+
+// parseDurAlias aceita "7d", "24h", "30m" — go time.ParseDuration não tem "d".
+func parseDurAlias(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(s[:len(s)-1])
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
+}
+
+// applySearchFilters reduz o universo de sessions baseado nos filtros parseados.
+func (s *Server) applySearchFilters(all []*model.Session, f searchFilters) []*model.Session {
+	if !f.hasFilter {
+		return all
+	}
+	cutoff := time.Time{}
+	if f.since > 0 {
+		cutoff = time.Now().Add(-f.since)
+	}
+	out := make([]*model.Session, 0, len(all))
+	for _, sess := range all {
+		if f.project != "" && !strings.Contains(strings.ToLower(sess.ProjectDir), f.project) {
+			continue
+		}
+		if f.branch != "" && !strings.Contains(strings.ToLower(sess.GitBranch), f.branch) {
+			continue
+		}
+		if f.model != "" && !strings.Contains(strings.ToLower(sess.Model), f.model) {
+			continue
+		}
+		if !cutoff.IsZero() && sess.StartTime.Before(cutoff) {
+			continue
+		}
+		if f.costMin >= 0 || f.costMax >= 0 {
+			c, _ := s.Pricing.Cost(sess)
+			if f.costMin >= 0 && c.USD < f.costMin {
+				continue
+			}
+			if f.costMax >= 0 && c.USD > f.costMax {
+				continue
+			}
+		}
+		out = append(out, sess)
+	}
+	return out
+}
+
+func metaMatch(sess *model.Session, q string) bool {
+	hit, _, _ := metaMatchExt(sess, q, nil)
+	return hit
 }
 
 // --- AI ---
