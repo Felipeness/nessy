@@ -12,6 +12,9 @@ import type {
   SearchResponse,
   Session,
   SimilarResult,
+  StatuslineComponentMeta,
+  StatuslineConfig,
+  StatuslineThemesResp,
   Stats,
   Timeline,
   ToolDrill,
@@ -26,6 +29,16 @@ async function get<T>(path: string): Promise<T> {
 
 async function post<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: 'POST' })
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  return (await res.json()) as T
+}
+
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return (await res.json()) as T
 }
@@ -63,4 +76,11 @@ export const api = {
   aiInsightsGenerate: () => post<{ status: string }>('/api/ai/insights/generate'),
   aiProfile: () => get<Profile>('/api/ai/profile'),
   aiProfileGenerate: () => post<{ status: string }>('/api/ai/profile/generate'),
+  statuslineComponents: () => get<StatuslineComponentMeta[]>('/api/statusline/components'),
+  statuslineThemes: () => get<StatuslineThemesResp>('/api/statusline/themes'),
+  statuslineConfigGet: () => get<StatuslineConfig>('/api/statusline/config'),
+  statuslineConfigSave: (cfg: StatuslineConfig) =>
+    postJSON<{ status: string; path: string }>('/api/statusline/config', cfg),
+  statuslineRender: (cfg: StatuslineConfig) =>
+    postJSON<{ ansi: string }>('/api/statusline/render', { config: cfg }),
 }

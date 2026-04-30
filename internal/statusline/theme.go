@@ -50,6 +50,12 @@ var Themes = map[string]*Theme{
 	"mono":     monoTheme(),
 }
 
+// ThemeNames em ordem fixa pra UI (não-aleatória como mapa).
+var ThemeNames = []string{"graphite", "nord", "dracula", "sakura", "mono"}
+
+// StyleNames em ordem fixa pra UI.
+var StyleNames = []string{"plain", "powerline", "capsule"}
+
 // GetTheme com fallback graphite.
 func GetTheme(name string) *Theme {
 	if t, ok := Themes[name]; ok {
