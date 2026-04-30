@@ -7,6 +7,7 @@ import type {
   ClusterInfo,
   Insight,
   Knowledge,
+  KnowledgeAggregate,
   Profile,
   Session,
   SimilarResult,
@@ -25,6 +26,7 @@ export function AITab({ reindexCounter }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [knowledge, setKnowledge] = useState<Knowledge | null>(null)
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
+  const [aggregated, setAggregated] = useState<KnowledgeAggregate | null>(null)
   const [genStatus, setGenStatus] = useState<string>('')
 
   // health + sessions sempre carregam ao montar / quando refresh externo
@@ -33,13 +35,14 @@ export function AITab({ reindexCounter }: Props) {
     api.sessions().then(setSessions)
   }, [reindexCounter])
 
-  // summaries + clusters + insights + profile dependem de health.enabled
+  // summaries + clusters + insights + profile + aggregated dependem de health.enabled
   useEffect(() => {
     if (!health?.enabled) return
     api.aiSummaries().then(setSummaries).catch(() => {})
     api.aiClusters().then(setClusters).catch(() => {})
     api.aiInsights().then(setInsights).catch(() => {})
     api.aiProfile().then(setProfile).catch(() => {})
+    api.aiKnowledgeAggregated().then(setAggregated).catch(() => {})
   }, [health?.enabled, reindexCounter])
 
   useEffect(() => {
@@ -131,6 +134,7 @@ export function AITab({ reindexCounter }: Props) {
     if (selectedId) {
       api.aiKnowledgeOne(selectedId).then(setKnowledge).catch(() => {})
     }
+    api.aiKnowledgeAggregated().then(setAggregated).catch(() => {})
   }, [knowledgeAllDone, selectedId])
 
   const handleGenKnowledge = async () => {
@@ -321,6 +325,32 @@ export function AITab({ reindexCounter }: Props) {
         {knowledge && <KnowledgeCard k={knowledge} />}
       </section>
 
+      {/* Knowledge agregado — visão cross-session do segundo cérebro */}
+      {aggregated && aggregated.sessions_analyzed > 0 && (
+        <section className="bg-[#161b22] rounded p-4 border border-[#30363d]">
+          <div className="flex items-center justify-between mb-3 gap-3">
+            <div>
+              <h2 className="font-bold">🧬 Knowledge agregado</h2>
+              <p className="text-xs text-zinc-500">
+                Visão cross-session: padrões mais usados, decisões timeline,
+                problemas recorrentes, tech consolidada, perguntas em aberto.{' '}
+                <span className="text-zinc-400">
+                  Baseado em {aggregated.sessions_analyzed} session
+                  {aggregated.sessions_analyzed > 1 ? 's' : ''} com knowledge gerado.
+                </span>
+              </p>
+            </div>
+            <button
+              onClick={() => api.aiKnowledgeAggregated().then(setAggregated)}
+              className="px-3 py-1 rounded border border-[#30363d] text-xs hover:bg-[#0d1117] whitespace-nowrap"
+            >
+              ↻ refresh
+            </button>
+          </div>
+          <AggregatedView agg={aggregated} onSelectSession={setSelectedId} />
+        </section>
+      )}
+
       {/* Personal profile */}
       <section className="bg-[#161b22] rounded p-4 border border-[#30363d]">
         <div className="flex items-center mb-3">
@@ -482,6 +512,172 @@ function insightIcon(type: string): string {
     default:
       return '💡'
   }
+}
+
+// AggregatedView renderiza as 5 visões cross-session em cards lado-a-lado.
+// Cada card é collapsible (default expandido). Cliques em session_ids
+// chamam onSelectSession pra mudar a session ativa.
+function AggregatedView({
+  agg,
+  onSelectSession,
+}: {
+  agg: KnowledgeAggregate
+  onSelectSession: (id: string) => void
+}) {
+  return (
+    <div className="space-y-3">
+      {/* Tech frequency — chips compactos */}
+      {agg.tech_frequency.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-indigo-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+            🔧 Tech frequency · {agg.tech_frequency.length} techs
+          </h4>
+          <div className="flex flex-wrap gap-1.5">
+            {agg.tech_frequency.map((t) => (
+              <span
+                key={t.name}
+                className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 text-xs font-mono"
+                title={`em ${t.count} session${t.count > 1 ? 's' : ''}`}
+              >
+                {t.name} · {t.count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top patterns */}
+      {agg.top_patterns.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-cyan-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+            ⚙️ Top code patterns · {agg.top_patterns.length}
+          </h4>
+          <ul className="space-y-1.5 text-xs">
+            {agg.top_patterns.map((p, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className="text-cyan-400 font-mono w-8 shrink-0">×{p.count}</span>
+                <div className="flex-1">
+                  <span className="text-zinc-200">{p.pattern}</span>
+                  <SessionLinks ids={p.sessions} onSelect={onSelectSession} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Recurring problems */}
+      {agg.recurring_problems.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-rose-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+            🔁 Problemas recorrentes · {agg.recurring_problems.length} clusters
+          </h4>
+          <ul className="space-y-2 text-xs">
+            {agg.recurring_problems.map((c, i) => (
+              <li key={i}>
+                <div className="flex items-start gap-2">
+                  <span className="text-rose-400 font-mono w-8 shrink-0">×{c.count}</span>
+                  <div className="flex-1">
+                    <p className="text-zinc-200">{c.representative}</p>
+                    {c.keywords.length > 0 && (
+                      <p className="text-[10px] text-zinc-500 mt-0.5">
+                        keywords:{' '}
+                        {c.keywords.map((k) => (
+                          <code key={k} className="mr-1">{k}</code>
+                        ))}
+                      </p>
+                    )}
+                    <SessionLinks ids={c.sessions} onSelect={onSelectSession} />
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Decision history — timeline */}
+      {agg.decision_history.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-blue-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+            ⚖️ Decision history · {agg.decision_history.length} decisões
+          </h4>
+          <ul className="space-y-2 text-xs">
+            {agg.decision_history.slice(0, 15).map((d, i) => (
+              <li key={i} className="border-l-2 border-zinc-700 pl-3">
+                <p className="text-zinc-200 font-medium">{d.decision}</p>
+                {d.rationale && (
+                  <p className="text-zinc-400 text-[11px] mt-0.5">— {d.rationale}</p>
+                )}
+                <div className="flex items-center gap-2 mt-1 text-[10px] text-zinc-600">
+                  <span>{new Date(d.generated_at * 1000).toLocaleDateString()}</span>
+                  <SessionLinks ids={[d.session_id]} onSelect={onSelectSession} compact />
+                </div>
+              </li>
+            ))}
+            {agg.decision_history.length > 15 && (
+              <li className="text-zinc-600 text-[11px]">+{agg.decision_history.length - 15} mais</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* Open questions */}
+      {agg.open_questions.length > 0 && (
+        <div className="bg-[#0d1117] rounded p-3 border-l-4 border-amber-500">
+          <h4 className="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+            ❓ Em aberto · {agg.open_questions.length} perguntas
+          </h4>
+          <ul className="space-y-1.5 text-xs">
+            {agg.open_questions.map((q, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span
+                  className={`font-mono w-12 shrink-0 text-[10px] ${
+                    q.age_days > 14 ? 'text-rose-400' : q.age_days > 7 ? 'text-amber-400' : 'text-zinc-500'
+                  }`}
+                  title={`gerado há ${q.age_days} dias`}
+                >
+                  {q.age_days === 0 ? 'hoje' : `${q.age_days}d`}
+                </span>
+                <div className="flex-1">
+                  <span className="text-zinc-200">{q.question}</span>
+                  <SessionLinks ids={[q.session_id]} onSelect={onSelectSession} compact />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// SessionLinks renderiza session_ids como botões clicáveis pra mudar a
+// session ativa no AI tab (e ver KnowledgeCard daquela).
+function SessionLinks({
+  ids,
+  onSelect,
+  compact = false,
+}: {
+  ids: string[]
+  onSelect: (id: string) => void
+  compact?: boolean
+}) {
+  if (ids.length === 0) return null
+  return (
+    <div className={`flex flex-wrap gap-1 ${compact ? '' : 'mt-1'}`}>
+      {ids.map((id) => (
+        <button
+          key={id}
+          onClick={() => onSelect(id)}
+          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/50 text-zinc-400 hover:bg-blue-500/20 hover:text-blue-300"
+          title={`abrir session ${id}`}
+        >
+          {id.slice(0, 8)}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // KnowledgeCard renderiza o "segundo cérebro" extraído de uma session.

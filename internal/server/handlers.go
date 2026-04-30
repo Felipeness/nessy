@@ -46,8 +46,9 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/ai/profile", s.handleAIProfile)
 	mux.HandleFunc("/api/ai/profile/generate", s.handleAIGenerateProfile)
 	mux.HandleFunc("/api/ai/knowledge", s.handleAIKnowledgeList)
-	mux.HandleFunc("/api/ai/knowledge/", s.handleAIKnowledgeOne) // /api/ai/knowledge/<session_id>
+	mux.HandleFunc("/api/ai/knowledge/aggregated", s.handleAIKnowledgeAggregated)
 	mux.HandleFunc("/api/ai/knowledge/generate-all", s.handleAIGenerateKnowledgeAll)
+	mux.HandleFunc("/api/ai/knowledge/", s.handleAIKnowledgeOne) // /api/ai/knowledge/<session_id>
 	mux.HandleFunc("/api/statusline", s.handleStatusline)
 	mux.HandleFunc("/api/statusline/components", s.handleStatuslineComponents)
 	mux.HandleFunc("/api/statusline/themes", s.handleStatuslineThemes)
@@ -204,6 +205,17 @@ func (s *Server) handleAIKnowledgeOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, knowledgeToOut(k))
+}
+
+// handleAIKnowledgeAggregated devolve as 5 visões cross-session: top patterns,
+// decision history, recurring problems, tech frequency, open questions.
+func (s *Server) handleAIKnowledgeAggregated(w http.ResponseWriter, r *http.Request) {
+	agg, err := ai.AggregateKnowledge(s.DB)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, agg)
 }
 
 func (s *Server) handleAIGenerateKnowledgeAll(w http.ResponseWriter, r *http.Request) {

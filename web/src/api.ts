@@ -7,6 +7,7 @@ import type {
   Costs,
   Insight,
   Knowledge,
+  KnowledgeAggregate,
   Message,
   Profile,
   ReindexStats,
@@ -92,6 +93,8 @@ export const api = {
     post<{ status: string }>(`/api/ai/knowledge/${id}`),
   aiKnowledgeGenerateAll: () =>
     post<{ status: string }>('/api/ai/knowledge/generate-all'),
+  aiKnowledgeAggregated: () =>
+    get<KnowledgeAggregate>('/api/ai/knowledge/aggregated'),
   statuslineComponents: () => get<StatuslineComponentMeta[]>('/api/statusline/components'),
   statuslineThemes: () => get<StatuslineThemesResp>('/api/statusline/themes'),
   statuslineConfigGet: () => get<StatuslineConfig>('/api/statusline/config'),

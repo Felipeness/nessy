@@ -269,6 +269,48 @@ export type Knowledge = {
   generated_at: number
 }
 
+export type PatternFrequency = {
+  pattern: string
+  count: number
+  sessions: string[]
+}
+
+export type DecisionEntry = {
+  decision: string
+  rationale: string
+  session_id: string
+  generated_at: number
+}
+
+export type ProblemCluster = {
+  representative: string
+  sessions: string[]
+  count: number
+  keywords: string[]
+}
+
+export type TechFrequency = {
+  name: string
+  count: number
+  sessions: string[]
+}
+
+export type OpenQuestionEntry = {
+  question: string
+  session_id: string
+  generated_at: number
+  age_days: number
+}
+
+export type KnowledgeAggregate = {
+  sessions_analyzed: number
+  top_patterns: PatternFrequency[]
+  decision_history: DecisionEntry[]
+  recurring_problems: ProblemCluster[]
+  tech_frequency: TechFrequency[]
+  open_questions: OpenQuestionEntry[]
+}
+
 export type Bigram = { A: string; B: string; Count: number }
 export type Trigram = { A: string; B: string; C: string; Count: number }
 export type CoOccur = { A: string; B: string; Count: number; PMI: number }
