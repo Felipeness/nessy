@@ -392,10 +392,16 @@ func (m Model) renderBody() string {
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
+	var body string
 	if m.width >= wideCols {
-		return m.renderWide(bodyHeight)
+		body = m.renderWide(bodyHeight)
+	} else {
+		body = m.renderNarrow(bodyHeight)
 	}
-	return m.renderNarrow(bodyHeight)
+	// Clamp pra bodyHeight × m.width: garante que tab bar (linha 0) e status
+	// bar (última linha) sempre apareçam, mesmo que tabs como Stats/Behavior/AI
+	// produzam conteúdo mais alto que o terminal.
+	return lipgloss.NewStyle().Width(m.width).Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
 }
 
 func (m Model) renderWide(h int) string {
@@ -420,23 +426,25 @@ func (m Model) renderWide(h int) string {
 			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
 		)
 	case tabCosts:
-		return left.Render(m.costs.View(m.width))
+		// full-width — costs/timeline/behavior/ai não tem detail panel
+		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.costs.View(m.width))
 	case tabTimeline:
-		return left.Render(m.timeline.View(m.width))
+		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.timeline.View(m.width))
 	case tabTools:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.tools.View(leftW)),
 			right.Render(m.tools.renderDrillDown(rightW)),
 		)
 	case tabBehavior:
-		return left.Render(m.behavior.View(m.width))
+		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.behavior.View(m.width))
 	case tabAI:
-		return left.Render(m.ai.View(m.width, m.recent.selected()))
+		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ai.View(m.width, m.recent.selected()))
 	}
 	return ""
 }
 
 func (m Model) renderNarrow(h int) string {
+	clamp := lipgloss.NewStyle().Width(m.width).MaxHeight(h)
 	switch m.activeTab {
 	case tabSearch:
 		return m.search.View(m.width, h)
@@ -444,19 +452,19 @@ func (m Model) renderNarrow(h int) string {
 		return m.recent.View(m.width, h)
 	case tabStats:
 		if m.stats.showLocal {
-			return m.detailCtx.renderDetail(m.recent.selected())
+			return clamp.Render(m.detailCtx.renderDetail(m.recent.selected()))
 		}
-		return m.stats.renderGlobal(m.width)
+		return clamp.Render(m.stats.renderGlobal(m.width))
 	case tabCosts:
-		return m.costs.View(m.width)
+		return clamp.Render(m.costs.View(m.width))
 	case tabTimeline:
-		return m.timeline.View(m.width)
+		return clamp.Render(m.timeline.View(m.width))
 	case tabTools:
-		return m.tools.View(m.width)
+		return clamp.Render(m.tools.View(m.width))
 	case tabBehavior:
-		return m.behavior.View(m.width)
+		return clamp.Render(m.behavior.View(m.width))
 	case tabAI:
-		return m.ai.View(m.width, m.recent.selected())
+		return clamp.Render(m.ai.View(m.width, m.recent.selected()))
 	}
 	return ""
 }

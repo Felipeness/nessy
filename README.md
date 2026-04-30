@@ -11,6 +11,8 @@ Lê os JSONLs que o Claude Code grava em `~/.claude/projects/<encoded-cwd>/*.jso
 
 ## Instalação
 
+### 1. Build
+
 ```bash
 git clone git@github.com:Felipeness/claude-history ~/Desktop/Projects/claude-history
 cd ~/Desktop/Projects/claude-history
@@ -19,6 +21,105 @@ go build -o ~/.local/bin/claude-history .
 ```
 
 Garante que `~/.local/bin` está no seu PATH. Bun é necessário só pra buildar o frontend uma vez (depois fica embedded no binário Go).
+
+### 2. Subir o daemon
+
+Necessário pra Web UI, statusline live (cost/p90/burn-rate) e SSE updates:
+
+```bash
+claude-history serve --no-open    # http://localhost:5555
+```
+
+Roda em foreground. Pra deixar sempre ativo no boot via launchd, veja [Daemon persistente](#daemon-persistente) abaixo.
+
+### 3. Plugar o statusline no Claude Code (opcional mas recomendado)
+
+```bash
+claude-history statusline-install --preset compact
+# Se você já tem outro statusline (ccstatusline, etc) instalado:
+claude-history statusline-install --preset compact --force
+```
+
+Isso:
+- Cria backup automático: `~/.claude/settings.json.bak.YYYYMMDD-HHMMSS`
+- Faz merge atômico no `~/.claude/settings.json` — preserva `permissions`, `hooks`, e qualquer outra key que já exista
+- Escreve `~/.claude-history/statusline.toml` com o preset escolhido
+- Sem `--force`, recusa se já existe `statusLine` apontando pra outro tool
+
+Depois **reinicia o Claude Code** — o `statusLine` só carrega no boot. Pronto, vai aparecer assim no terminal:
+
+```
+~/Desktop/Projects/claude-history │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m
+```
+
+### 4. Customizar o statusline visualmente
+
+Abra `http://localhost:5555/#studio` no browser — drag-drop dos components, escolha de tema (graphite/nord/dracula/sakura/mono), 3 styles (plain/powerline/capsule), thresholds (warn/critical) por component, mock data pra simular cenários. Salvar persiste em `~/.claude-history/statusline.toml`.
+
+Ou edite o TOML direto:
+
+```toml
+theme = "graphite"
+style = "plain"
+
+[[lines]]
+components = ["cwd", "git", "model", "context_pct", "cost_session", "burn_rate"]
+separator = " │ "
+
+[components.context_pct]
+warn_at = 50
+critical_at = 80
+
+[components.cost_session]
+warn_at = 0.8     # × p90 → amarelo
+critical_at = 1.2 # × p90 → vermelho
+```
+
+Reinicia o Claude Code pra aplicar (não tem hot-reload do config — Claude Code lê 1x).
+
+### Desinstalar o statusline
+
+```bash
+claude-history statusline-install --uninstall
+# OU restaurar do backup:
+cp ~/.claude/settings.json.bak.YYYYMMDD-HHMMSS ~/.claude/settings.json
+```
+
+### 5. (opcional) AI features — Ollama
+
+```bash
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+ollama serve
+```
+
+Sem isso a tab AI fica vazia, mas todo o resto (statusline, TUI, costs) funciona normal.
+
+### Daemon persistente
+
+Pra `claude-history serve` rodar sempre no login (assim o statusline sempre tem dados), crie `~/Library/LaunchAgents/com.claude-history.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.claude-history</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/SEU_USER/.local/bin/claude-history</string>
+        <string>serve</string>
+        <string>--no-open</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/tmp/claude-history.log</string>
+    <key>StandardErrorPath</key><string>/tmp/claude-history.err</string>
+</dict>
+</plist>
+```
+
+Ativa: `launchctl load ~/Library/LaunchAgents/com.claude-history.plist`
 
 ## Visão geral das fases
 
