@@ -62,7 +62,11 @@ export const api = {
   tools: () => get<ToolStat[]>('/api/tools'),
   toolDrill: (name: string) =>
     get<ToolDrill[]>(`/api/tools/${encodeURIComponent(name)}/sessions`),
-  search: (q: string, mode: 'metadata' | 'fts' = 'metadata', expand = false) => {
+  search: (
+    q: string,
+    mode: 'hybrid' | 'metadata' | 'fts' | 'semantic' = 'hybrid',
+    expand = false,
+  ) => {
     const params = new URLSearchParams({ q, mode })
     if (expand) params.set('expand', 'true')
     return get<SearchResponse>(`/api/search?${params}`)

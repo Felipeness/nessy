@@ -37,9 +37,10 @@ export function SearchTab({ reindexCounter: _ }: Props) {
     }
     setLoading(true)
     const handle = setTimeout(() => {
-      // backend detecta :body / :meta / :sim / :all sozinho via prefixo do q.
+      // backend detecta :body / :meta / :sim / :all sozinho via prefixo do q,
+      // mas mandamos o mode certo pra default branch (hybrid).
       api
-        .search(query, effective.mode === 'metadata' ? 'metadata' : 'fts', expand)
+        .search(query, effective.mode, expand)
         .then((r) => setResults(r.results || []))
         .finally(() => setLoading(false))
     }, 200)

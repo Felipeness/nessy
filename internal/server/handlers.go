@@ -687,6 +687,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	modeFlag := r.URL.Query().Get("mode")
 
+	// :all força hybrid + expand, independente do mode flag — detect ANTES
+	// pra não ser engolido por outros prefixes ou o modeFlag do frontend.
+	expandFlag := r.URL.Query().Get("expand") == "true"
+	if strings.HasPrefix(q, ":all ") {
+		q = strings.TrimSpace(q[5:])
+		expandFlag = true
+		modeFlag = "hybrid"
+	}
+
 	// Default agora é hybrid (metadata + FTS combinados), não só metadata.
 	mode := modeFlag
 	if mode == "" || mode == "metadata" {
@@ -745,11 +754,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	case "metadata":
 		s.searchMetadata(q, candidates, summaryByID, &resp)
 	default: // hybrid — metadata primeiro, depois FTS, dedupe por session
-		expand := r.URL.Query().Get("expand") == "true" || strings.HasPrefix(q, ":all ")
-		if strings.HasPrefix(q, ":all ") {
-			q = strings.TrimSpace(q[5:])
-		}
-		s.searchHybrid(q, candidates, summaryByID, &resp, expand)
+		s.searchHybrid(q, candidates, summaryByID, &resp, expandFlag)
 	}
 	writeJSON(w, 200, resp)
 }
