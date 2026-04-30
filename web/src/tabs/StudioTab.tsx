@@ -18,8 +18,45 @@ import { api } from '../api'
 import type {
   StatuslineComponentMeta,
   StatuslineConfig,
+  StatuslineMock,
   StatuslineThemesResp,
 } from '../types'
+
+// defaultMock — alinhado com defaultMockInput() do backend.
+const DEFAULT_MOCK: StatuslineMock = {
+  cwd: '/Users/dev/projects/my-app',
+  branch: 'feat/CC-1234-statusline',
+  model: 'Opus 4.7',
+  context_pct: 42,
+  cost_usd: 0.32,
+  lines_added: 45,
+  lines_removed: 12,
+  rate_5h_pct: 73,
+  rate_7d_pct: 18,
+  vim_mode: '',
+}
+
+// mockToInput transforma os campos editáveis no shape Input que o backend espera.
+function mockToInput(m: StatuslineMock) {
+  return {
+    cwd: m.cwd,
+    session_id: 'preview-mock',
+    model: { display_name: m.model, id: 'claude-opus-4-7' },
+    workspace: { current_dir: m.cwd, project_dir: m.cwd },
+    context_window: { used_percentage: m.context_pct },
+    cost: {
+      total_cost_usd: m.cost_usd,
+      total_lines_added: m.lines_added,
+      total_lines_removed: m.lines_removed,
+    },
+    rate_limits: {
+      five_hour: { used_percentage: m.rate_5h_pct },
+      seven_day: { used_percentage: m.rate_7d_pct },
+    },
+    worktree: { branch: m.branch },
+    vim: m.vim_mode ? { mode: m.vim_mode } : undefined,
+  }
+}
 
 // Studio é o editor visual do statusline. Esquerda: theme + style + lista de
 // linhas com components draggable. Direita: preview live (debounce 150ms).
@@ -32,6 +69,8 @@ export function StudioTab() {
   const [previewHTML, setPreviewHTML] = useState('')
   const [saveStatus, setSaveStatus] = useState('')
   const [pickerLineIdx, setPickerLineIdx] = useState<number | null>(null)
+  const [mock, setMock] = useState<StatuslineMock>(DEFAULT_MOCK)
+  const [editingComponent, setEditingComponent] = useState<string | null>(null)
 
   // Inicial load
   useEffect(() => {
@@ -68,12 +107,12 @@ export function StudioTab() {
     if (!cfg) return
     const t = setTimeout(() => {
       api
-        .statuslineRender(cfg)
+        .statuslineRender(cfg, mockToInput(mock))
         .then((r) => setPreviewHTML(r.html))
         .catch((err) => setPreviewHTML('<span class="text-red-400">error: ' + String(err) + '</span>'))
     }, 150)
     return () => clearTimeout(t)
-  }, [cfg])
+  }, [cfg, mock])
 
   // Save → POST + status flash
   const save = async () => {
@@ -160,6 +199,7 @@ export function StudioTab() {
                   setCfg({ ...cfg, lines })
                 }}
                 onAddClick={() => setPickerLineIdx(idx)}
+                onEditThreshold={setEditingComponent}
               />
             ))}
           </div>
@@ -203,9 +243,22 @@ export function StudioTab() {
             <AnsiPreview html={previewHTML} />
           </div>
           <div className="mt-2 text-xs text-[var(--color-muted)]">
-            Mock: <code>~/dev/projects/my-app</code> · branch <code>feat/CC-1234</code> · Opus 4.7 ·
-            42% context · $0.32 · 5h limit 73%
+            Edite os valores em "Mock data" abaixo pra simular cenários.
           </div>
+        </Section>
+
+        <Section
+          title="Mock data"
+          right={
+            <button
+              onClick={() => setMock(DEFAULT_MOCK)}
+              className="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+            >
+              ↺ resetar
+            </button>
+          }
+        >
+          <MockDataEditor mock={mock} onChange={setMock} />
         </Section>
 
         <Section title="Como instalar">
@@ -255,6 +308,23 @@ claude-history statusline-install --preset compact
             setPickerLineIdx(null)
           }}
           onClose={() => setPickerLineIdx(null)}
+        />
+      )}
+
+      {/* Threshold editor modal */}
+      {editingComponent && (
+        <ThresholdEditor
+          componentName={editingComponent}
+          meta={components.find((c) => c.name === editingComponent)}
+          opts={cfg.components?.[editingComponent] ?? {}}
+          onSave={(opts) => {
+            setCfg({
+              ...cfg,
+              components: { ...(cfg.components ?? {}), [editingComponent]: opts },
+            })
+            setEditingComponent(null)
+          }}
+          onClose={() => setEditingComponent(null)}
         />
       )}
     </div>
@@ -353,6 +423,7 @@ function LineEditor({
   onChange,
   onDelete,
   onAddClick,
+  onEditThreshold,
 }: {
   idx: number
   line: { components: string[]; separator?: string }
@@ -360,6 +431,7 @@ function LineEditor({
   onChange: (line: { components: string[]; separator?: string }) => void
   onDelete: () => void
   onAddClick: () => void
+  onEditThreshold: (name: string) => void
 }) {
   const sensors = useSensors(useSensor(PointerSensor))
   const ids = line.components
@@ -390,6 +462,8 @@ function LineEditor({
                   key={name}
                   name={name}
                   label={meta?.label ?? name}
+                  hasWarnAt={meta?.has_warn_at ?? false}
+                  onEditThreshold={() => onEditThreshold(name)}
                   onRemove={() =>
                     onChange({
                       ...line,
@@ -424,10 +498,14 @@ function LineEditor({
 function SortableChip({
   name,
   label,
+  hasWarnAt,
+  onEditThreshold,
   onRemove,
 }: {
   name: string
   label: string
+  hasWarnAt: boolean
+  onEditThreshold: () => void
   onRemove: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -447,15 +525,298 @@ function SortableChip({
       className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-card)] border border-[var(--color-border)] text-xs cursor-grab active:cursor-grabbing"
     >
       <span>{label}</span>
+      {hasWarnAt && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onEditThreshold()
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+          title="editar thresholds (warn/critical)"
+        >
+          ⚙
+        </button>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation()
           onRemove()
         }}
+        onPointerDown={(e) => e.stopPropagation()}
         className="text-[var(--color-muted)] hover:text-red-400"
       >
         ×
       </button>
+    </div>
+  )
+}
+
+// ThresholdEditor é um modal pra editar warn_at/critical_at de um component.
+function ThresholdEditor({
+  componentName,
+  meta,
+  opts,
+  onSave,
+  onClose,
+}: {
+  componentName: string
+  meta?: StatuslineComponentMeta
+  opts: { warn_at?: number; critical_at?: number; hide?: boolean }
+  onSave: (opts: { warn_at?: number; critical_at?: number; hide?: boolean }) => void
+  onClose: () => void
+}) {
+  const [warn, setWarn] = useState<string>(opts.warn_at?.toString() ?? '')
+  const [crit, setCrit] = useState<string>(opts.critical_at?.toString() ?? '')
+
+  const save = () => {
+    const w = warn.trim() === '' ? undefined : Number(warn)
+    const c = crit.trim() === '' ? undefined : Number(crit)
+    if ((w !== undefined && Number.isNaN(w)) || (c !== undefined && Number.isNaN(c))) {
+      alert('valores precisam ser numéricos')
+      return
+    }
+    if (w !== undefined && c !== undefined && c <= w) {
+      alert('critical_at precisa ser maior que warn_at')
+      return
+    }
+    onSave({ warn_at: w, critical_at: c, hide: opts.hide })
+  }
+
+  const reset = () => {
+    setWarn('')
+    setCrit('')
+    onSave({ hide: opts.hide })
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg w-[440px] p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-sm font-bold">{meta?.label ?? componentName}</div>
+            <div className="text-xs text-[var(--color-muted)]">{meta?.description}</div>
+          </div>
+          <button onClick={onClose} className="text-[var(--color-muted)]">×</button>
+        </div>
+        <div className="space-y-3 text-xs">
+          <p className="text-[var(--color-muted)]">
+            <code>warn_at</code> = valor a partir do qual o component fica amarelo.{' '}
+            <code>critical_at</code> = vermelho. Vazio = usa default do component.
+          </p>
+          <div>
+            <label className="block mb-1 text-[var(--color-muted)]">warn_at</label>
+            <input
+              type="number"
+              step="any"
+              value={warn}
+              onChange={(e) => setWarn(e.target.value)}
+              placeholder="(default)"
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+            />
+          </div>
+          <div>
+            <label className="block mb-1 text-[var(--color-muted)]">critical_at</label>
+            <input
+              type="number"
+              step="any"
+              value={crit}
+              onChange={(e) => setCrit(e.target.value)}
+              placeholder="(default)"
+              className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+            />
+          </div>
+          <ThresholdHints name={componentName} />
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={save}
+            className="flex-1 px-3 py-1.5 rounded bg-[var(--color-accent)] text-black font-medium text-sm"
+          >
+            Salvar
+          </button>
+          <button
+            onClick={reset}
+            className="px-3 py-1.5 rounded border border-[var(--color-border)] text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+          >
+            ↺ default
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ThresholdHints({ name }: { name: string }) {
+  const hints: Record<string, string> = {
+    context_pct: 'Default: warn=50, critical=80 (% do context window).',
+    cost_session: 'Default: warn=0.8×p90, critical=1.2×p90 (multiplicador). Só age se daemon up.',
+    burn_rate: 'Default: warn=1500, critical=3000 (tokens/min).',
+    rate_5h: 'Default: warn=70, critical=90 (% do bloco de 5h).',
+    rate_7d: 'Default: warn=70, critical=90 (% do bloco semanal).',
+  }
+  const h = hints[name]
+  if (!h) return null
+  return <p className="text-[10px] text-[var(--color-muted)]">{h}</p>
+}
+
+// MockDataEditor — form pra editar os valores que viram Input no preview.
+function MockDataEditor({
+  mock,
+  onChange,
+}: {
+  mock: StatuslineMock
+  onChange: (m: StatuslineMock) => void
+}) {
+  const set = <K extends keyof StatuslineMock>(k: K, v: StatuslineMock[K]) =>
+    onChange({ ...mock, [k]: v })
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="cwd">
+          <input
+            type="text"
+            value={mock.cwd}
+            onChange={(e) => set('cwd', e.target.value)}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+          />
+        </Field>
+        <Field label="branch">
+          <input
+            type="text"
+            value={mock.branch}
+            onChange={(e) => set('branch', e.target.value)}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+          />
+        </Field>
+        <Field label="model">
+          <input
+            type="text"
+            value={mock.model}
+            onChange={(e) => set('model', e.target.value)}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono text-xs"
+          />
+        </Field>
+        <Field label="vim mode">
+          <select
+            value={mock.vim_mode}
+            onChange={(e) => set('vim_mode', e.target.value as StatuslineMock['vim_mode'])}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1"
+          >
+            <option value="">(off)</option>
+            <option value="NORMAL">NORMAL</option>
+            <option value="INSERT">INSERT</option>
+          </select>
+        </Field>
+      </div>
+
+      <SliderField
+        label="context %"
+        value={mock.context_pct}
+        min={0}
+        max={100}
+        step={1}
+        onChange={(v) => set('context_pct', v)}
+      />
+      <SliderField
+        label="cost USD"
+        value={mock.cost_usd}
+        min={0}
+        max={5}
+        step={0.01}
+        onChange={(v) => set('cost_usd', v)}
+      />
+
+      <div className="grid grid-cols-2 gap-2">
+        <SliderField
+          label="rate 5h %"
+          value={mock.rate_5h_pct}
+          min={0}
+          max={100}
+          step={1}
+          onChange={(v) => set('rate_5h_pct', v)}
+        />
+        <SliderField
+          label="rate 7d %"
+          value={mock.rate_7d_pct}
+          min={0}
+          max={100}
+          step={1}
+          onChange={(v) => set('rate_7d_pct', v)}
+        />
+        <Field label="lines added">
+          <input
+            type="number"
+            min={0}
+            value={mock.lines_added}
+            onChange={(e) => set('lines_added', Number(e.target.value))}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+          />
+        </Field>
+        <Field label="lines removed">
+          <input
+            type="number"
+            min={0}
+            value={mock.lines_removed}
+            onChange={(e) => set('lines_removed', Number(e.target.value))}
+            className="w-full bg-[var(--color-card)] border border-[var(--color-border)] rounded px-2 py-1 font-mono"
+          />
+        </Field>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block mb-1 text-[10px] text-[var(--color-muted)] uppercase tracking-wide">
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+function SliderField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  onChange: (v: number) => void
+}) {
+  return (
+    <div>
+      <div className="flex justify-between text-[10px] text-[var(--color-muted)] uppercase tracking-wide mb-1">
+        <span>{label}</span>
+        <span className="font-mono normal-case tracking-normal text-[var(--color-fg)]">
+          {step < 1 ? value.toFixed(2) : value}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full"
+      />
     </div>
   )
 }

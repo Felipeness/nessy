@@ -189,6 +189,21 @@ export type StatuslineConfig = {
   history?: { endpoint?: string; timeout?: string }
 }
 
+// StatuslineMock é o subset de campos que o user edita no Mock Data editor.
+// Convertido em Input completo pelo Studio antes de mandar pro POST /render.
+export type StatuslineMock = {
+  cwd: string
+  branch: string
+  model: string
+  context_pct: number
+  cost_usd: number
+  lines_added: number
+  lines_removed: number
+  rate_5h_pct: number
+  rate_7d_pct: number
+  vim_mode: '' | 'NORMAL' | 'INSERT'
+}
+
 export type AIHealth = {
   enabled: boolean
   ollama_reachable: boolean
