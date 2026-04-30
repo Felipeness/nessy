@@ -49,6 +49,7 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/ai/knowledge/aggregated", s.handleAIKnowledgeAggregated)
 	mux.HandleFunc("/api/ai/knowledge/generate-all", s.handleAIGenerateKnowledgeAll)
 	mux.HandleFunc("/api/ai/knowledge/", s.handleAIKnowledgeOne) // /api/ai/knowledge/<session_id>
+	mux.HandleFunc("/api/ai/chat", s.handleAIChat)
 	mux.HandleFunc("/api/statusline", s.handleStatusline)
 	mux.HandleFunc("/api/statusline/components", s.handleStatuslineComponents)
 	mux.HandleFunc("/api/statusline/themes", s.handleStatuslineThemes)
@@ -216,6 +217,37 @@ func (s *Server) handleAIKnowledgeAggregated(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, 200, agg)
+}
+
+// handleAIChat — chat "Ness IA" com RAG sobre session_knowledge + summaries.
+// Body: {"messages": [{"role": "user|assistant", "content": "..."}, ...]}
+// Resposta: {"response": "...", "sources": [{"session_id", "similarity", ...}]}
+func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "POST required")
+		return
+	}
+	if !s.requireAI(w) {
+		return
+	}
+	var body struct {
+		Messages []ai.ChatMsg `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, 400, "invalid json: "+err.Error())
+		return
+	}
+	if len(body.Messages) == 0 {
+		writeErr(w, 400, "messages required")
+		return
+	}
+	embedModel := "nomic-embed-text"
+	resp, err := ai.ChatWithContext(r.Context(), s.DB, s.AIClient, s.GenModel, embedModel, body.Messages)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, resp)
 }
 
 func (s *Server) handleAIGenerateKnowledgeAll(w http.ResponseWriter, r *http.Request) {

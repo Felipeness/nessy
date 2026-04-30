@@ -110,6 +110,47 @@ func (c *Client) generate(ctx context.Context, model, prompt string, numPredict 
 	return strings.TrimSpace(out.Response), nil
 }
 
+// ChatMessage é o shape de uma mensagem na API /api/chat do Ollama.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Chat chama /api/chat (non-streaming) com a conversa completa. Diferente
+// de Generate, aceita system prompt + multi-turn naturalmente.
+func (c *Client) Chat(ctx context.Context, model string, messages []ChatMessage) (string, error) {
+	body := map[string]any{
+		"model":    model,
+		"messages": messages,
+		"stream":   false,
+		"options": map[string]any{
+			"temperature": 0.4,
+			"num_predict": 2048,
+		},
+	}
+	buf, _ := json.Marshal(body)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/chat", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama chat %d: %s", resp.StatusCode, string(raw))
+	}
+	var out struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.Message.Content), nil
+}
+
 // Embedding chama /api/embeddings, retorna vetor float32.
 func (c *Client) Embedding(ctx context.Context, model, text string) ([]float32, error) {
 	body := map[string]any{
