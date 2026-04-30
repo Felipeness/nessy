@@ -193,7 +193,7 @@ func (v threadsView) renderTree(width int) string {
 		fmt.Fprintf(&b, "\n%s %s %s\n",
 			header.Render("───"),
 			lipgloss.NewStyle().Foreground(colorFg).Bold(true).Render(short),
-			muted.Render(strings.Repeat("─", maxInt(0, width-len(short)-8))))
+			muted.Render(strings.Repeat("─", maxInt(0, width-lipgloss.Width(short)-8))))
 
 		for _, t := range grouped[dir] {
 			v.renderThreadCard(&b, t, now, width, cardBorder, muted)
@@ -230,10 +230,7 @@ func (v threadsView) renderThreadCard(b *strings.Builder, t *stats.Thread, now t
 	rightLen := lipgloss.Width(right)
 
 	// Top border
-	dashes := width - headerLeftLen - rightLen - 6
-	if dashes < 0 {
-		dashes = 0
-	}
+	dashes := maxInt(0, width-headerLeftLen-rightLen-6)
 	top := borderStyle.Render("╭─") + headerInner +
 		borderStyle.Render(strings.Repeat("─", dashes)+"╮") +
 		right
@@ -280,10 +277,7 @@ func (v threadsView) renderThreadCard(b *strings.Builder, t *stats.Thread, now t
 		if isCursor {
 			// Full-width selection bar
 			plain := stripAnsi(line)
-			pad := width - len(plain)
-			if pad < 0 {
-				pad = 0
-			}
+			pad := maxInt(0, width-lipgloss.Width(plain))
 			sel := lipgloss.NewStyle().
 				Background(lipgloss.Color("237")).
 				Foreground(colorAccent).
@@ -295,7 +289,8 @@ func (v threadsView) renderThreadCard(b *strings.Builder, t *stats.Thread, now t
 	}
 
 	// Bottom border
-	b.WriteString(borderStyle.Render("╰"+strings.Repeat("─", width-1)) + "\n")
+	dashCount := maxInt(0, width-1)
+	b.WriteString(borderStyle.Render("╰"+strings.Repeat("─", dashCount)) + "\n")
 }
 
 // flatRowIndex acha índice de uma session na flat list (pra detecção do cursor).
@@ -382,9 +377,10 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 	}
 
 	var lines []string
+	innerW := maxInt(0, w-2)
 
 	// Top border
-	lines = append(lines, bordStyle.Render("╭"+strings.Repeat("─", w-2)+"╮"))
+	lines = append(lines, bordStyle.Render("╭"+strings.Repeat("─", innerW)+"╮"))
 
 	// Project line
 	short := shortPath(t.ProjectDir, mustHomeTUI())
@@ -393,7 +389,7 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 	}
 	projLine := bordStyle.Render("│ ") +
 		muted.Render("📁 "+short) +
-		strings.Repeat(" ", maxInt(0, w-2-3-len(short)-1)) +
+		strings.Repeat(" ", maxInt(0, w-2-4-lipgloss.Width(short)-1)) +
 		bordStyle.Render("│")
 	lines = append(lines, projLine)
 
@@ -416,10 +412,11 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 		len(t.Sessions),
 		fmtDuration(t.TotalDur),
 		fmt.Sprintf("$%.2f", t.TotalCost))
+	dotsW := lipgloss.Width(stripAnsi(dotsRendered))
 	statsLine := bordStyle.Render("│ ") +
 		dotsRendered +
 		muted.Render(statsTxt) +
-		strings.Repeat(" ", maxInt(0, w-2-len(t.Sessions)-len(statsTxt)-1)) +
+		strings.Repeat(" ", maxInt(0, w-2-dotsW-lipgloss.Width(statsTxt)-1)) +
 		bordStyle.Render("│")
 	lines = append(lines, statsLine)
 
@@ -427,7 +424,7 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 	spark := stats.SparklineFromThread(t)
 	sparkLine := bordStyle.Render("│ ") +
 		lipgloss.NewStyle().Foreground(colorAccent).Render(spark) +
-		strings.Repeat(" ", maxInt(0, w-2-len(spark)-1)) +
+		strings.Repeat(" ", maxInt(0, w-2-lipgloss.Width(spark)-1)) +
 		bordStyle.Render("│")
 	lines = append(lines, sparkLine)
 
@@ -442,13 +439,13 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 		latestLine := bordStyle.Render("│ ") +
 			subdued.Render("↳ ") +
 			lipgloss.NewStyle().Foreground(colorFg).Render(title) +
-			strings.Repeat(" ", maxInt(0, w-2-2-len(title)-1)) +
+			strings.Repeat(" ", maxInt(0, w-2-2-lipgloss.Width(title)-1)) +
 			bordStyle.Render("│")
 		lines = append(lines, latestLine)
 	}
 
 	// Bottom border
-	lines = append(lines, bordStyle.Render("╰"+strings.Repeat("─", w-2)+"╯"))
+	lines = append(lines, bordStyle.Render("╰"+strings.Repeat("─", innerW)+"╯"))
 
 	return strings.Join(lines, "\n")
 }
@@ -654,7 +651,7 @@ func (v threadsView) renderMiller(width int) string {
 	}
 
 	// Preview pane embaixo
-	out.WriteString(bord.Render(strings.Repeat("─", width)) + "\n")
+	out.WriteString(bord.Render(strings.Repeat("─", maxInt(0, width))) + "\n")
 	if selSession != nil {
 		summary := v.titleFor(selSession)
 		summary = truncRight(summary, width-4)
@@ -824,7 +821,9 @@ func (v threadsView) renderTimeline(width int) string {
 	labelW := 22
 	timelineW := width - labelW - 2
 	if timelineW < 30 {
-		timelineW = 30
+		// Terminal muito estreito — degrada graciosamente
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"timeline view requer terminal ≥ 60 cols — use outra view ('v')")
 	}
 	totalSpan := maxT.Sub(minT)
 	if totalSpan == 0 {
