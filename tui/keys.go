@@ -39,7 +39,9 @@ type keymap struct {
 	Tab7    key.Binding
 	Tab8    key.Binding
 	Tab9    key.Binding
-	NessClear key.Binding
+	Tab10   key.Binding
+	NessClear  key.Binding
+	ViewToggle key.Binding
 }
 
 var keys = keymap{
@@ -80,7 +82,9 @@ var keys = keymap{
 	Tab7:    key.NewBinding(key.WithKeys("7"), key.WithHelp("7", "→ Behavior")),
 	Tab8:    key.NewBinding(key.WithKeys("8"), key.WithHelp("8", "→ AI")),
 	Tab9:    key.NewBinding(key.WithKeys("9"), key.WithHelp("9", "→ Ness IA")),
+	Tab10:   key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "→ Threads")),
 	NessClear: key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("ctrl+l", "[Ness] limpar conversa")),
+	ViewToggle: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "[Threads] alternar view (tree/cards/...)")),
 }
 
 func keyMatches(msgKey string, b key.Binding) bool {

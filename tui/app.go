@@ -31,11 +31,12 @@ const (
 	tabBehavior
 	tabAI
 	tabNess
+	tabThreads
 )
 
-var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior", "AI", "🧠 Ness"}
+var tabNames = []string{"Search", "Recent", "Stats", "Costs", "Timeline", "Tools", "Behavior", "AI", "🧠 Ness", "Threads"}
 
-const numTabs = 9
+const numTabs = 10
 
 const wideCols = 120
 
@@ -63,6 +64,7 @@ type Model struct {
 	behavior    behaviorView
 	ai          aiView
 	ness        nessView
+	threads     threadsView
 	aiClient    *ai.Client
 	aiWorker    *ai.Worker
 
@@ -125,6 +127,7 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		behavior:  newBehaviorView(sessions, p),
 		ai:        newAIView(aiDeps.Enabled, aiDeps.Client, aiDeps.Worker, aiDeps.GenModel, aiDeps.EmbedModel, db, sessions),
 		ness:      newNessView(aiDeps.Enabled, aiDeps.Client, db, aiDeps.GenModel, aiDeps.EmbedModel),
+		threads:   newThreadsView(db, p, sessions, loadSummaries(db)),
 		aiClient:  aiDeps.Client,
 		aiWorker:  aiDeps.Worker,
 	}
@@ -309,6 +312,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.Tab9):
 			m.activeTab = tabNess
 			return m, nil
+		case keyMatches(k, keys.Tab10):
+			m.activeTab = tabThreads
+			return m, nil
+		case keyMatches(k, keys.ViewToggle):
+			if m.activeTab == tabThreads {
+				m.threads.ToggleView()
+			}
+			return m, nil
 		case keyMatches(k, keys.Up):
 			m.moveCursor(-1)
 			return m, nil
@@ -414,6 +425,8 @@ func (m *Model) moveCursor(delta int) {
 		m.search.cursor = clamp(m.search.cursor+delta, 0, len(m.search.results)-1)
 	case tabTools:
 		m.tools.cursor = clamp(m.tools.cursor+delta, 0, len(m.tools.stats)-1)
+	case tabThreads:
+		m.threads.MoveCursor(delta)
 	}
 }
 
@@ -436,6 +449,8 @@ func (m Model) selectedForActiveTab() *model.Session {
 		return m.search.selected()
 	case tabStats:
 		return m.recent.selected()
+	case tabThreads:
+		return m.threads.selected()
 	}
 	return nil
 }
@@ -494,6 +509,8 @@ func (m Model) tabHint() string {
 		return "[S] summaries  [C] clusters  [I] insights  [P] profile  [K] knowledge  [ctrl+k] all" + tail
 	case tabNess:
 		return "chat com seu segundo cérebro · [enter] enviar  [ctrl+l] limpar conversa" + tail
+	case tabThreads:
+		return "threads agrupadas (cwd+branch+gap)  [v] alternar view  [↑↓] nav  [enter] retomar" + tail
 	}
 	return tail
 }
@@ -553,6 +570,11 @@ func (m Model) renderWide(h int) string {
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ai.View(m.width, m.recent.selected()))
 	case tabNess:
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ness.View(m.width, h))
+	case tabThreads:
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			left.Render(m.threads.View(leftW, h)),
+			right.Render(m.detailCtx.renderDetail(m.threads.selected())),
+		)
 	}
 	return ""
 }
@@ -581,6 +603,8 @@ func (m Model) renderNarrow(h int) string {
 		return clamp.Render(m.ai.View(m.width, m.recent.selected()))
 	case tabNess:
 		return clamp.Render(m.ness.View(m.width, h))
+	case tabThreads:
+		return clamp.Render(m.threads.View(m.width, h))
 	}
 	return ""
 }

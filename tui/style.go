@@ -5,6 +5,11 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	colorAccent = lipgloss.Color("39")
 	colorMuted  = lipgloss.Color("241")
+	colorFg     = lipgloss.Color("252")
+	colorBorder = lipgloss.Color("238")
+	colorOk     = lipgloss.Color("78")  // green
+	colorWarn   = lipgloss.Color("214") // amber
+	colorCrit   = lipgloss.Color("203") // red
 )
 
 var (
