@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,6 +55,8 @@ type threadsView struct {
 	cursor    int // sessão selecionada (índice na flat list)
 	flat      []*flatRow
 	gap       time.Duration
+	// millerPane: 0=projects, 1=branches, 2=sessions. Setas ←→ alternam.
+	millerPane int
 }
 
 // flatRow é uma linha "navegável" — pode ser thread header (não-selecionável)
@@ -89,22 +92,93 @@ func newThreadsView(db *index.DB, p *pricing.Pricing, sessions []*model.Session,
 	return v
 }
 
-// rebuildFlat reconstrói a flat list de rows baseada na view atual.
-// Pra tree, cada thread vira [header + sessions]. Pra cards, cada thread = 1 row.
-// Pra miller, é tratado fora (3 colunas).
+// rebuildFlat reconstrói a flat list baseada na ORDEM VISUAL da view atual.
+// Cada view tem sua própria ordem natural — pra cursor bater com o que aparece
+// na tela:
+//   tree/cards/miller: hierárquico (project > thread > sessions)
+//   graph/timeline/galaxy: cronológico global (start_time asc)
 func (v *threadsView) rebuildFlat() {
+	prevSessionID := ""
+	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
+		prevSessionID = v.flat[v.cursor].session.SessionID
+	}
 	v.flat = nil
-	for ti, t := range v.threads {
-		v.flat = append(v.flat, &flatRow{threadIdx: ti, sessionIdx: -1, thread: t})
-		for si, s := range t.Sessions {
+
+	switch v.view {
+	case threadViewGraph, threadViewTimeline, threadViewGalaxy:
+		// Cronológico global — mesma ordem que essas views renderizam
+		type entry struct {
+			t *stats.Thread
+			s *stats.ThreadSession
+		}
+		var all []entry
+		for _, t := range v.threads {
+			for _, s := range t.Sessions {
+				all = append(all, entry{t, s})
+			}
+		}
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].s.StartTime.Before(all[j].s.StartTime)
+		})
+		for _, e := range all {
+			ti := indexOfThread(v.threads, e.t)
+			si := indexOfSession(e.t, e.s)
 			v.flat = append(v.flat, &flatRow{
 				threadIdx:  ti,
 				sessionIdx: si,
-				thread:     t,
-				session:    s,
+				thread:     e.t,
+				session:    e.s,
 			})
 		}
+	default:
+		// Hierárquico — tree, cards, miller. Header (sessionIdx=-1) skipável.
+		for ti, t := range v.threads {
+			v.flat = append(v.flat, &flatRow{threadIdx: ti, sessionIdx: -1, thread: t})
+			for si, s := range t.Sessions {
+				v.flat = append(v.flat, &flatRow{
+					threadIdx:  ti,
+					sessionIdx: si,
+					thread:     t,
+					session:    s,
+				})
+			}
+		}
 	}
+
+	// Reposiciona cursor na mesma session que estava antes do rebuild
+	if prevSessionID != "" {
+		for i, row := range v.flat {
+			if row.session != nil && row.session.SessionID == prevSessionID {
+				v.cursor = i
+				return
+			}
+		}
+	}
+	// fallback: primeiro row com session
+	for i, row := range v.flat {
+		if row.session != nil {
+			v.cursor = i
+			return
+		}
+	}
+}
+
+func indexOfThread(threads []*stats.Thread, t *stats.Thread) int {
+	for i, x := range threads {
+		if x == t {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexOfSession(t *stats.Thread, s *stats.ThreadSession) int {
+	for i, x := range t.Sessions {
+		if x == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func (v *threadsView) ToggleView() {
@@ -128,6 +202,10 @@ func (v *threadsView) MoveCursor(delta int) {
 	if len(v.flat) == 0 {
 		return
 	}
+	if v.view == threadViewGalaxy {
+		v.moveCursorGalaxy(0, delta) // delta > 0 = baixo, < 0 = cima
+		return
+	}
 	step := 1
 	if delta < 0 {
 		step = -1
@@ -143,11 +221,98 @@ func (v *threadsView) MoveCursor(delta int) {
 			v.cursor = len(v.flat) - 1
 			return
 		}
-		// Skip headers
 		if v.flat[v.cursor].session != nil {
 			delta--
 		}
 	}
+}
+
+// MoveCursorH é nav horizontal — setas esquerda/direita. Comportamento por view:
+//   miller: alterna pane (projects ↔ branches ↔ sessions)
+//   galaxy: navega pro node mais próximo na direção
+//   outras views: fallback pra MoveCursor (delta menor — pula 1 dentro do mesmo group)
+func (v *threadsView) MoveCursorH(delta int) {
+	switch v.view {
+	case threadViewMiller:
+		v.millerPane += delta
+		if v.millerPane < 0 {
+			v.millerPane = 0
+		}
+		if v.millerPane > 2 {
+			v.millerPane = 2
+		}
+	case threadViewGalaxy:
+		v.moveCursorGalaxy(delta, 0) // delta > 0 = direita, < 0 = esquerda
+	default:
+		// Em outras views, faz nothing — esquerda/direita não tem sentido
+	}
+}
+
+// moveCursorGalaxy escolhe o próximo node mais próximo na direção dada.
+// dx > 0 = direita, dx < 0 = esquerda; dy > 0 = baixo, dy < 0 = cima.
+func (v *threadsView) moveCursorGalaxy(dx, dy int) {
+	// Galaxy precisa ter coords salvas — usa positions do último render.
+	// Como o force-directed roda a cada render, snapshotamos posições aqui
+	// rodando um layout determinístico rápido baseado em índice.
+	if v.cursor >= len(v.flat) {
+		return
+	}
+	curRow := v.flat[v.cursor]
+	if curRow.session == nil {
+		return
+	}
+	// Coordenadas heurísticas: usa start_time como x, hash do project como y.
+	// Ordem cronológica natural já tá na flat list.
+	// Pra simplificar: ←→ = sessão anterior/próxima cronologicamente,
+	// ↑↓ = sessão da thread anterior/próxima na lista.
+	if dx != 0 {
+		// flat já é cronológico em galaxy view
+		next := v.cursor + sign(dx)
+		for next >= 0 && next < len(v.flat) && v.flat[next].session == nil {
+			next += sign(dx)
+		}
+		if next >= 0 && next < len(v.flat) {
+			v.cursor = next
+		}
+	}
+	if dy != 0 {
+		// Acha próxima session de OUTRA thread na direção
+		curThread := curRow.thread
+		next := v.cursor + sign(dy)
+		for next >= 0 && next < len(v.flat) {
+			if v.flat[next].session != nil && v.flat[next].thread != curThread {
+				v.cursor = next
+				return
+			}
+			next += sign(dy)
+		}
+		// Fallback: primeiro/último válido
+		if dy > 0 {
+			for i := len(v.flat) - 1; i >= 0; i-- {
+				if v.flat[i].session != nil && v.flat[i].thread != curThread {
+					v.cursor = i
+					return
+				}
+			}
+		} else {
+			for i := 0; i < len(v.flat); i++ {
+				if v.flat[i].session != nil && v.flat[i].thread != curThread {
+					v.cursor = i
+					return
+				}
+			}
+		}
+	}
+}
+
+func sign(x int) int {
+	if x > 0 {
+		return 1
+	}
+	if x < 0 {
+		return -1
+	}
+	return 0
 }
 
 func (v threadsView) View(width, height int) string {
@@ -1237,7 +1402,8 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		_ = i
 	}
 
-	// Build flat node list (1 per session)
+	// Build flat node list (1 per session) — posicoes iniciais em CÍRCULO ao
+	// redor do centro pra evitar convergir em borrão.
 	type node struct {
 		s     *stats.ThreadSession
 		t     *stats.Thread
@@ -1246,6 +1412,16 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		r     int
 	}
 	var nodes []*node
+	totalSess := 0
+	for _, t := range v.threads {
+		totalSess += len(t.Sessions)
+	}
+	cx0, cy0 := float64(pixW)/2, float64(pixH)/2
+	rInit := minFloat(float64(pixW), float64(pixH))/2 - 12
+	if rInit < 20 {
+		rInit = 20
+	}
+	idx := 0
 	for _, t := range v.threads {
 		for _, s := range t.Sessions {
 			r := 2
@@ -1264,12 +1440,15 @@ func (v threadsView) renderGalaxy(width, height int) string {
 			if cost > 10 {
 				r = 5
 			}
+			// Distribute em círculo igualmente
+			theta := 2 * 3.14159265 * float64(idx) / float64(maxInt(1, totalSess))
 			nodes = append(nodes, &node{
 				s: s, t: t,
-				x: float64(pixW)/2 + float64(len(nodes)%5)*8 - 16,
-				y: float64(pixH)/2 + float64(len(nodes)/5)*8 - 16,
+				x: cx0 + rInit*cosApprox(theta),
+				y: cy0 + rInit*sinApprox(theta),
 				r: r,
 			})
+			idx++
 		}
 	}
 
@@ -1293,29 +1472,36 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		}
 	}
 
-	// Force-directed: 80 iterations
-	cx, cy := float64(pixW)/2, float64(pixH)/2
-	k := 12.0
-	for iter := 0; iter < 80; iter++ {
+	// Force-directed mais agressivo — k baseado em area + node count, repulsão
+	// reforçada, atração intra-projeto reduzida. 150 iters pra convergir.
+	cx, cy := cx0, cy0
+	k := sqrt(float64(pixW*pixH)/float64(maxInt(1, totalSess))) * 0.85
+
+	for iter := 0; iter < 150; iter++ {
+		// Cooling: força reduz com tempo pra estabilizar
+		coolFactor := 1.0 - float64(iter)/200.0
+		if coolFactor < 0.2 {
+			coolFactor = 0.2
+		}
+
 		for _, a := range nodes {
 			a.vx, a.vy = 0, 0
-			// Repulsion between all
+			// Repulsão forte entre todos
 			for _, b := range nodes {
 				if a == b {
 					continue
 				}
 				dx := a.x - b.x
 				dy := a.y - b.y
-				d := dx*dx + dy*dy
-				if d < 0.01 {
-					d = 0.01
+				d := sqrt(dx*dx + dy*dy)
+				if d < 0.5 {
+					d = 0.5
 				}
-				dn := sqrt(d)
-				f := (k * k) / dn
-				a.vx += (dx / dn) * f
-				a.vy += (dy / dn) * f
+				f := (k * k) / d * 1.5
+				a.vx += (dx / d) * f
+				a.vy += (dy / d) * f
 			}
-			// Cluster attraction within same project
+			// Atração intra-projeto SUAVE (cluster mas não colado)
 			for _, b := range nodes {
 				if a == b || a.t.ProjectDir != b.t.ProjectDir {
 					continue
@@ -1323,54 +1509,55 @@ func (v threadsView) renderGalaxy(width, height int) string {
 				dx := a.x - b.x
 				dy := a.y - b.y
 				d := sqrt(dx*dx + dy*dy)
-				if d < 0.01 {
+				if d < 0.5 {
 					continue
 				}
-				f := (d * d) / k * 0.5
+				f := (d * d) / k * 0.15
 				a.vx -= (dx / d) * f
 				a.vy -= (dy / d) * f
 			}
-			// Pull to center
-			a.vx += (cx - a.x) * 0.005
-			a.vy += (cy - a.y) * 0.005
+			// Pull suave pro centro
+			a.vx += (cx - a.x) * 0.003
+			a.vy += (cy - a.y) * 0.003
 		}
 		// Edge attraction
 		for _, e := range edges {
 			dx := e.a.x - e.b.x
 			dy := e.a.y - e.b.y
 			d := sqrt(dx*dx + dy*dy)
-			if d < 0.01 {
+			if d < 0.5 {
 				continue
 			}
-			f := (d * d) / k * 0.8
+			f := (d * d) / k * 0.5
 			e.a.vx -= (dx / d) * f
 			e.a.vy -= (dy / d) * f
 			e.b.vx += (dx / d) * f
 			e.b.vy += (dy / d) * f
 		}
-		// Apply with damping + clamp
+		// Apply velocity com damping + clamp
 		for _, n := range nodes {
 			speed := sqrt(n.vx*n.vx + n.vy*n.vy)
 			if speed < 0.01 {
 				speed = 0.01
 			}
 			cap := speed
-			if cap > 5 {
-				cap = 5
+			if cap > 8 {
+				cap = 8
 			}
-			n.x += (n.vx / speed) * cap * 0.3
-			n.y += (n.vy / speed) * cap * 0.3
-			if n.x < 8 {
-				n.x = 8
+			n.x += (n.vx / speed) * cap * coolFactor * 0.4
+			n.y += (n.vy / speed) * cap * coolFactor * 0.4
+			margin := 6.0
+			if n.x < margin {
+				n.x = margin
 			}
-			if n.x > float64(pixW)-8 {
-				n.x = float64(pixW) - 8
+			if n.x > float64(pixW)-margin {
+				n.x = float64(pixW) - margin
 			}
-			if n.y < 4 {
-				n.y = 4
+			if n.y < margin {
+				n.y = margin
 			}
-			if n.y > float64(pixH)-4 {
-				n.y = float64(pixH) - 4
+			if n.y > float64(pixH)-margin {
+				n.y = float64(pixH) - margin
 			}
 		}
 	}
@@ -1382,19 +1569,40 @@ func (v threadsView) renderGalaxy(width, height int) string {
 	}
 	// Identifica session selecionada
 	var selSession *model.Session
+	var selNode *node
 	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
 		selSession = v.flat[v.cursor].session.Session
+		for _, n := range nodes {
+			if n.s.SessionID == selSession.SessionID {
+				selNode = n
+				break
+			}
+		}
 	}
 
-	// Draw nodes — selected node ganha "anel" branco em volta
+	// Draw nodes
 	for _, n := range nodes {
 		col := projectColors[n.t.ProjectDir]
-		isSel := selSession != nil && n.s.SessionID == selSession.SessionID
-		if isSel {
-			// Anel branco maior em volta
-			canvas.circle(int(n.x), int(n.y), n.r+2, lipgloss.Color("#ffffff"))
-		}
 		canvas.circle(int(n.x), int(n.y), n.r, col)
+	}
+	// Draw cursor anel + crosshair sobre nó selecionado (último, fica em cima)
+	if selNode != nil {
+		accentCol := lipgloss.Color("#a78bfa")
+		// Anel maior accent (apenas borda — pixels no perímetro)
+		ringR := selNode.r + 3
+		for theta := 0.0; theta < 6.28; theta += 0.05 {
+			x := int(selNode.x + float64(ringR)*cosApprox(theta))
+			y := int(selNode.y + float64(ringR)*sinApprox(theta))
+			canvas.set(x, y, accentCol)
+			canvas.set(x+1, y, accentCol)
+		}
+		// Crosshair: linhas curtas saindo do node
+		cx0 := int(selNode.x)
+		cy0 := int(selNode.y)
+		canvas.line(cx0-ringR-3, cy0, cx0-ringR-1, cy0, accentCol, false)
+		canvas.line(cx0+ringR+1, cy0, cx0+ringR+3, cy0, accentCol, false)
+		canvas.line(cx0, cy0-ringR-3, cx0, cy0-ringR-1, accentCol, false)
+		canvas.line(cx0, cy0+ringR+1, cx0, cy0+ringR+3, accentCol, false)
 	}
 
 	// Render + legend + selected info
@@ -1427,8 +1635,39 @@ func sqrt(x float64) float64 {
 		return 0
 	}
 	z := x / 2
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 12; i++ {
 		z = z - (z*z-x)/(2*z)
 	}
 	return z
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// cosApprox/sinApprox — Taylor series simple. Sem importar math.
+func cosApprox(x float64) float64 {
+	// Reduz pra [-π, π]
+	for x > 3.14159265 {
+		x -= 2 * 3.14159265
+	}
+	for x < -3.14159265 {
+		x += 2 * 3.14159265
+	}
+	x2 := x * x
+	return 1 - x2/2 + x2*x2/24 - x2*x2*x2/720
+}
+
+func sinApprox(x float64) float64 {
+	for x > 3.14159265 {
+		x -= 2 * 3.14159265
+	}
+	for x < -3.14159265 {
+		x += 2 * 3.14159265
+	}
+	x2 := x * x
+	return x - x*x2/6 + x*x2*x2/120 - x*x2*x2*x2/5040
 }

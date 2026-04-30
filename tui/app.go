@@ -326,6 +326,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.Down):
 			m.moveCursor(+1)
 			return m, nil
+		case keyMatches(k, keys.Left):
+			if m.activeTab == tabThreads {
+				m.threads.MoveCursorH(-1)
+			}
+			return m, nil
+		case keyMatches(k, keys.Right):
+			if m.activeTab == tabThreads {
+				m.threads.MoveCursorH(+1)
+			}
+			return m, nil
 		case keyMatches(k, keys.PageUp):
 			m.moveCursor(-10)
 			return m, nil
@@ -510,7 +520,7 @@ func (m Model) tabHint() string {
 	case tabNess:
 		return "chat com seu segundo cérebro · [enter] enviar  [ctrl+l] limpar conversa" + tail
 	case tabThreads:
-		return "threads agrupadas (cwd+branch+gap)  [v] alternar view  [↑↓] nav  [enter] retomar" + tail
+		return "threads (cwd+branch+gap)  [v] view  [↑↓] nav  [←→] miller pane / galaxy lateral  [enter] retomar" + tail
 	}
 	return tail
 }
@@ -678,7 +688,7 @@ func isGlobalKey(k string) bool {
 	switch k {
 	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o",
 		"ctrl+e", "ctrl+t", "ctrl+y", "ctrl+k", "ctrl+f", "ctrl+b",
-		"up", "down", "home", "end", "pgup", "pgdown":
+		"up", "down", "left", "right", "home", "end", "pgup", "pgdown":
 		// Setas + Ctrl+* nunca são caracteres digitáveis, então sempre
 		// passam por cima da input pra navegar/atalhos globais funcionarem
 		// na tab Search.

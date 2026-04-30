@@ -7,6 +7,8 @@ type keymap struct {
 	PrevTab key.Binding
 	Up      key.Binding
 	Down    key.Binding
+	Left    key.Binding
+	Right   key.Binding
 	Top     key.Binding
 	Bottom  key.Binding
 	PageUp  key.Binding
@@ -49,6 +51,8 @@ var keys = keymap{
 	PrevTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev tab")),
 	Up:      key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k", "up")),
 	Down:    key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j", "down")),
+	Left:    key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h", "left")),
+	Right:   key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l", "right")),
 	Top:     key.NewBinding(key.WithKeys("home"), key.WithHelp("gg/home", "top")),
 	Bottom:  key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G/end", "bottom")),
 	PageUp:  key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page up")),
