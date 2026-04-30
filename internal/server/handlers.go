@@ -745,16 +745,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	case "metadata":
 		s.searchMetadata(q, candidates, summaryByID, &resp)
 	default: // hybrid — metadata primeiro, depois FTS, dedupe por session
-		s.searchHybrid(q, candidates, summaryByID, &resp)
+		expand := r.URL.Query().Get("expand") == "true" || strings.HasPrefix(q, ":all ")
+		if strings.HasPrefix(q, ":all ") {
+			q = strings.TrimSpace(q[5:])
+		}
+		s.searchHybrid(q, candidates, summaryByID, &resp, expand)
 	}
 	writeJSON(w, 200, resp)
 }
 
-// searchHybrid roda metadata + FTS5 e combina, deduplicando por session.
-// Metadata vem primeiro (mais barata, hits diretos). FTS preenche gaps.
-func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp) {
+// searchHybrid roda metadata + FTS5 e combina. Por default deduplica por
+// session (1 resultado por session, mostra o melhor match). Quando expand=true,
+// emite cada FTS hit como entry separada — útil pra "ver todos os matches de
+// 'docker' em todas sessions, sem perder nada".
+func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp, expand bool) {
+	matchCount := map[string]int{} // por session, pra count badge
 	seen := map[string]bool{}
-	// Metadata
+
+	// Metadata primeiro
 	lower := strings.ToLower(q)
 	for _, sess := range sessions {
 		if hit, snippet, role := metaMatchExt(sess, lower, summaries); hit {
@@ -764,7 +772,8 @@ func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map
 			})
 		}
 	}
-	// FTS5 — só os que ainda não saíram
+
+	// FTS5
 	results, err := s.DB.SearchFTS(q)
 	if err != nil {
 		results, _ = s.DB.SearchLike(q)
@@ -773,15 +782,36 @@ func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map
 	for _, sess := range sessions {
 		byID[sess.SessionID] = sess
 	}
+
 	for _, r := range results {
+		matchCount[r.SessionID]++
+		sess, ok := byID[r.SessionID]
+		if !ok {
+			continue
+		}
+		if expand {
+			// Cada hit vira entry separada
+			resp.Results = append(resp.Results, searchResultEntry{
+				Session: sess, Snippet: r.Snippet, Role: "body:" + r.Role, Rank: r.Rank,
+			})
+			continue
+		}
+		// Deduplicado: só primeiro hit da session
 		if seen[r.SessionID] {
 			continue
 		}
 		seen[r.SessionID] = true
-		if sess, ok := byID[r.SessionID]; ok {
-			resp.Results = append(resp.Results, searchResultEntry{
-				Session: sess, Snippet: r.Snippet, Role: "body:" + r.Role, Rank: r.Rank,
-			})
+		resp.Results = append(resp.Results, searchResultEntry{
+			Session: sess, Snippet: r.Snippet, Role: "body:" + r.Role, Rank: r.Rank,
+		})
+	}
+
+	// Anota match count na role pra UI mostrar "+15 matches" badge
+	if !expand {
+		for i, e := range resp.Results {
+			if c := matchCount[e.Session.SessionID]; c > 1 {
+				resp.Results[i].Role = fmt.Sprintf("%s (+%d)", e.Role, c-1)
+			}
 		}
 	}
 }

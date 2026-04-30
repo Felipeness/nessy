@@ -22,6 +22,7 @@ export function SearchTab({ reindexCounter: _ }: Props) {
   const [selected, setSelected] = useState<Session | null>(null)
   const [loading, setLoading] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [expand, setExpand] = useState(false)
 
   const effective = useMemo(() => detectMode(query), [query])
 
@@ -36,15 +37,15 @@ export function SearchTab({ reindexCounter: _ }: Props) {
     }
     setLoading(true)
     const handle = setTimeout(() => {
-      // backend detecta :body / :sim sozinho via prefixo do q.
+      // backend detecta :body / :meta / :sim / :all sozinho via prefixo do q.
       api
-        .search(query, effective.mode === 'metadata' ? 'metadata' : 'fts')
+        .search(query, effective.mode === 'metadata' ? 'metadata' : 'fts', expand)
         .then((r) => setResults(r.results || []))
         .finally(() => setLoading(false))
     }, 200)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query])
+  }, [query, expand])
 
   return (
     <div className="flex h-full">
@@ -56,6 +57,21 @@ export function SearchTab({ reindexCounter: _ }: Props) {
             placeholder='ex: docker   |   :sim auth refactor   |   project:claude cost:>1 since:7d   (hybrid: busca em tudo)'
             className="flex-1 px-3 py-2 rounded bg-[var(--color-card)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] text-sm font-mono"
           />
+          <button
+            onClick={() => setExpand((v) => !v)}
+            title={
+              expand
+                ? 'mostrando todos os hits — desabilita pra agrupar por session'
+                : 'agrupar por session — habilita pra ver TODOS os hits'
+            }
+            className={`px-2 py-1 rounded text-[10px] uppercase tracking-wide border whitespace-nowrap ${
+              expand
+                ? 'bg-[var(--color-accent)] text-black border-[var(--color-accent)]'
+                : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+            }`}
+          >
+            {expand ? '◉ todos hits' : '◯ agrupar'}
+          </button>
           <button
             onClick={() => setShowHelp((v) => !v)}
             title="ajuda — operadores e exemplos"
@@ -207,11 +223,24 @@ function SearchHelp() {
       </div>
 
       <div>
+        <p className="font-bold text-[var(--color-fg)] mb-1">Como ver TODOS os hits</p>
+        <p className="text-[11px] text-[var(--color-muted)]">
+          Por default, cada session aparece 1x (com badge <code>+N</code> mostrando
+          quantos outros hits ela tem). Pra explodir e ver cada match individualmente:
+        </p>
+        <ul className="space-y-0.5 text-[11px] text-[var(--color-muted)] font-mono mt-1">
+          <li>• Toggle <span className="text-[var(--color-accent)]">◉ todos hits</span> ao lado da search bar</li>
+          <li>• OU prefix <code>:all docker</code> direto na query</li>
+        </ul>
+      </div>
+
+      <div>
         <p className="font-bold text-[var(--color-fg)] mb-1">Exemplos</p>
         <ul className="space-y-1 text-[11px] text-[var(--color-muted)] font-mono">
-          <li><code>react</code> — substring "react" em qualquer campo</li>
-          <li><code>:body decoder bug</code> — sessions com "decoder bug" no conteúdo</li>
-          <li><code>:sim error handling pattern</code> — sessions semanticamente parecidas</li>
+          <li><code>docker</code> — hybrid: metadata + FTS, 1 entry por session</li>
+          <li><code>:all docker</code> — TODOS os hits, mesmo várias por session</li>
+          <li><code>:body decoder bug</code> — só FTS5</li>
+          <li><code>:sim error handling pattern</code> — semantic via embeddings</li>
           <li><code>cost:&gt;5 since:7d</code> — sessions caras dos últimos 7 dias</li>
           <li><code>project:claude-history :body fts5</code> — full-text só no projeto X</li>
           <li><code>branch:feat/CC-1234</code> — todas sessions desse ticket</li>
