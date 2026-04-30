@@ -42,7 +42,8 @@ type searchView struct {
 	all       []*model.Session
 	results   []searchHit
 	cursor    int
-	expand    bool // true (default) = todos hits; false = 1 por session
+	expand    bool // false (default) = 1 por session; true = todos hits
+	fuzzy     bool // false (default) = exact LIKE filter; true = Porter stemmer
 }
 
 func newSearchView(db *index.DB, p *pricing.Pricing, all []*model.Session) searchView {
@@ -71,6 +72,13 @@ func sessionsToHits(sessions []*model.Session) []searchHit {
 // ToggleExpand alterna entre modo agrupado e todos hits, recomputando.
 func (v *searchView) ToggleExpand() {
 	v.expand = !v.expand
+	v.Filter(v.input.Value())
+}
+
+// ToggleFuzzy alterna entre busca exata (default) e fuzzy (Porter stemmer).
+// Recomputa imediatamente.
+func (v *searchView) ToggleFuzzy() {
+	v.fuzzy = !v.fuzzy
 	v.Filter(v.input.Value())
 }
 
@@ -125,6 +133,25 @@ func (v *searchView) Filter(query string) {
 	v.clampCursor()
 }
 
+// runFTS escolhe entre exact (LIKE filter) e fuzzy (Porter stem) baseado
+// em v.fuzzy. Usado por searchFTS e searchHybridTUI.
+func (v *searchView) runFTS(q string) []index.SearchResult {
+	if v.db == nil {
+		return nil
+	}
+	var results []index.SearchResult
+	var err error
+	if v.fuzzy {
+		results, err = v.db.SearchFTS(q)
+	} else {
+		results, err = v.db.SearchFTSExact(q)
+	}
+	if err != nil {
+		results, _ = v.db.SearchLike(q)
+	}
+	return results
+}
+
 func (v *searchView) clampCursor() {
 	if v.cursor >= len(v.results) {
 		v.cursor = len(v.results) - 1
@@ -149,13 +176,7 @@ func (v *searchView) searchMetadata(q string, sessions []*model.Session) []searc
 // searchFTS roda FTS5. Quando expand=true, cada match vira hit. Quando false,
 // dedupa por session.
 func (v *searchView) searchFTS(q string, sessions []*model.Session, expand bool) []searchHit {
-	if v.db == nil {
-		return nil
-	}
-	results, err := v.db.SearchFTS(q)
-	if err != nil {
-		results, _ = v.db.SearchLike(q)
-	}
+	results := v.runFTS(q)
 	byID := map[string]*model.Session{}
 	for _, s := range sessions {
 		byID[s.SessionID] = s
@@ -192,13 +213,7 @@ func (v *searchView) searchHybridTUI(q string, sessions []*model.Session, expand
 		}
 	}
 	// FTS — todos hits ou só novos sessions
-	if v.db == nil {
-		return out
-	}
-	results, err := v.db.SearchFTS(q)
-	if err != nil {
-		results, _ = v.db.SearchLike(q)
-	}
+	results := v.runFTS(q)
 	byID := map[string]*model.Session{}
 	for _, s := range sessions {
 		byID[s.SessionID] = s
@@ -411,9 +426,13 @@ func (v searchView) View(width, height int) string {
 	if v.expand {
 		expandLabel = "todos hits"
 	}
+	matchLabel := "exato"
+	if v.fuzzy {
+		matchLabel = "fuzzy"
+	}
 	header := lipgloss.NewStyle().Foreground(colorMuted).Render(
-		"mode: " + modeNames[v.mode] + " · view: " + expandLabel + " · " +
-			strconv.Itoa(len(v.results)) + " results · [ctrl+t] expand · [↑↓] nav · [enter] retomar",
+		"mode: " + modeNames[v.mode] + " · " + expandLabel + " · " + matchLabel +
+			" · " + strconv.Itoa(len(v.results)) + " results · [ctrl+t] expand · [ctrl+f] fuzzy · [↑↓] nav · [enter] retomar",
 	)
 	now := time.Now()
 	var rows []string

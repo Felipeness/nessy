@@ -24,6 +24,7 @@ export function SearchTab({ reindexCounter: _ }: Props) {
   const [showHelp, setShowHelp] = useState(false)
   // groupBySession: true = 1 por session (default); false = todos hits
   const [groupBySession, setGroupBySession] = useState(true)
+  const [fuzzy, setFuzzy] = useState(false) // false = exato; true = Porter stem
 
   const effective = useMemo(() => detectMode(query), [query])
 
@@ -38,15 +39,14 @@ export function SearchTab({ reindexCounter: _ }: Props) {
     }
     setLoading(true)
     const handle = setTimeout(() => {
-      // Default: TODOS os hits. Toggle "agrupar" passa group=true.
       api
-        .search(query, effective.mode, groupBySession)
+        .search(query, effective.mode, groupBySession, fuzzy)
         .then((r) => setResults(r.results || []))
         .finally(() => setLoading(false))
     }, 200)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, groupBySession])
+  }, [query, groupBySession, fuzzy])
 
   return (
     <div className="flex h-full">
@@ -72,6 +72,21 @@ export function SearchTab({ reindexCounter: _ }: Props) {
             }`}
           >
             {groupBySession ? '◉ agrupado' : '◯ todos hits'}
+          </button>
+          <button
+            onClick={() => setFuzzy((v) => !v)}
+            title={
+              fuzzy
+                ? 'fuzzy: Porter stemmer — "docker" casa "dock", "docked", etc'
+                : 'exato: match literal — "docker" só casa "docker", "Docker"'
+            }
+            className={`px-2 py-1 rounded text-[10px] uppercase tracking-wide border whitespace-nowrap ${
+              fuzzy
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+            }`}
+          >
+            {fuzzy ? '⚇ fuzzy' : '◎ exato'}
           </button>
           <button
             onClick={() => setShowHelp((v) => !v)}

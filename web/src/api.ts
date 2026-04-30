@@ -66,9 +66,11 @@ export const api = {
     q: string,
     mode: 'hybrid' | 'metadata' | 'fts' | 'semantic' = 'hybrid',
     group = false, // default = todos hits; group=true dedupa por session
+    fuzzy = false, // default = exato (LIKE filter); fuzzy = Porter stem
   ) => {
     const params = new URLSearchParams({ q, mode })
     if (group) params.set('group', 'true')
+    if (fuzzy) params.set('fuzzy', 'true')
     return get<SearchResponse>(`/api/search?${params}`)
   },
   refresh: () => post<ReindexStats>('/api/refresh'),

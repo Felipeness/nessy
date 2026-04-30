@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/felipeness/claude-history/internal/model"
@@ -476,18 +477,38 @@ func (db *DB) IndexMessages(msgs []parser.Message) error {
 	return tx.Commit()
 }
 
-// SearchFTS runs an FTS5 MATCH query and returns ranked results.
+// SearchFTS roda FTS5 MATCH com Porter stemmer (fuzzy: 'docker' → casa
+// 'dock', 'docked', 'docks', 'docker'). Bom pra natural language.
 func (db *DB) SearchFTS(query string) ([]SearchResult, error) {
-	const sql = `
+	return db.searchFTSImpl(query, false)
+}
+
+// SearchFTSExact roda FTS5 + post-filtra com LIKE pra exigir match literal
+// da palavra. Bom pra brand names ('Docker', 'Postgres') e termos técnicos
+// onde stem produz falsos positivos.
+func (db *DB) SearchFTSExact(query string) ([]SearchResult, error) {
+	return db.searchFTSImpl(query, true)
+}
+
+func (db *DB) searchFTSImpl(query string, exact bool) ([]SearchResult, error) {
+	sql := `
 		SELECT session_id, role,
 			snippet(messages_fts, 2, '[', ']', '…', 16) AS snippet,
 			rank
 		FROM messages_fts
 		WHERE messages_fts MATCH ?
-		ORDER BY rank
-		LIMIT 100
 	`
-	rows, err := db.conn.Query(sql, query)
+	args := []any{query}
+	if exact {
+		// LIKE filtra resultados onde o conteúdo contém a query literal
+		// (case-insensitive). FTS5 usa o índice primeiro e LIKE só roda
+		// no result set pequeno — sem custo significativo.
+		sql += ` AND lower(content) LIKE ?`
+		args = append(args, "%"+strings.ToLower(query)+"%")
+	}
+	sql += ` ORDER BY rank LIMIT 100`
+
+	rows, err := db.conn.Query(sql, args...)
 	if err != nil {
 		return nil, err
 	}

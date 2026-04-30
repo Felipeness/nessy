@@ -702,6 +702,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("expand") == "false" {
 		expandFlag = false
 	}
+	// fuzzy=true ativa Porter stemmer (FTS5 default). Default é exact —
+	// faz post-filter LIKE pra não casar 'dock' quando user busca 'docker'.
+	fuzzyFlag := r.URL.Query().Get("fuzzy") == "true"
 
 	// Default agora é hybrid (metadata + FTS combinados), não só metadata.
 	mode := modeFlag
@@ -755,22 +758,20 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	switch mode {
 	case "fts":
-		s.searchFTS(q, candidates, &resp)
+		s.searchFTS(q, candidates, &resp, fuzzyFlag)
 	case "semantic":
 		s.searchSemantic(r.Context(), q, candidates, embeddingByID, &resp)
 	case "metadata":
 		s.searchMetadata(q, candidates, summaryByID, &resp)
 	default: // hybrid — metadata primeiro, depois FTS, dedupe por session
-		s.searchHybrid(q, candidates, summaryByID, &resp, expandFlag)
+		s.searchHybrid(q, candidates, summaryByID, &resp, expandFlag, fuzzyFlag)
 	}
 	writeJSON(w, 200, resp)
 }
 
-// searchHybrid roda metadata + FTS5 e combina. Por default deduplica por
-// session (1 resultado por session, mostra o melhor match). Quando expand=true,
-// emite cada FTS hit como entry separada — útil pra "ver todos os matches de
-// 'docker' em todas sessions, sem perder nada".
-func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp, expand bool) {
+// searchHybrid roda metadata + FTS5 e combina. expand controla dedup,
+// fuzzy controla Porter stemmer.
+func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map[string]string, resp *searchResp, expand bool, fuzzy bool) {
 	matchCount := map[string]int{} // por session, pra count badge
 	seen := map[string]bool{}
 
@@ -785,8 +786,14 @@ func (s *Server) searchHybrid(q string, sessions []*model.Session, summaries map
 		}
 	}
 
-	// FTS5
-	results, err := s.DB.SearchFTS(q)
+	// FTS5 — exato (LIKE post-filter) ou fuzzy (Porter stem)
+	var results []index.SearchResult
+	var err error
+	if fuzzy {
+		results, err = s.DB.SearchFTS(q)
+	} else {
+		results, err = s.DB.SearchFTSExact(q)
+	}
 	if err != nil {
 		results, _ = s.DB.SearchLike(q)
 	}
@@ -841,9 +848,16 @@ func (s *Server) searchMetadata(q string, sessions []*model.Session, summaries m
 	}
 }
 
-// searchFTS faz query FTS5 e mapeia pra sessions.
-func (s *Server) searchFTS(q string, sessions []*model.Session, resp *searchResp) {
-	results, err := s.DB.SearchFTS(q)
+// searchFTS faz query FTS5 e mapeia pra sessions. exact=true post-filtra
+// com LIKE pra não pegar matches só pelo Porter stem.
+func (s *Server) searchFTS(q string, sessions []*model.Session, resp *searchResp, fuzzy bool) {
+	var results []index.SearchResult
+	var err error
+	if fuzzy {
+		results, err = s.DB.SearchFTS(q)
+	} else {
+		results, err = s.DB.SearchFTSExact(q)
+	}
 	if err != nil {
 		results, _ = s.DB.SearchLike(q)
 	}

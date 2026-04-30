@@ -297,6 +297,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.search.ToggleExpand()
 			}
 			return m, nil
+		case keyMatches(k, keys.Fuzzy):
+			if m.activeTab == tabSearch {
+				m.search.ToggleFuzzy()
+			}
+			return m, nil
 		case keyMatches(k, keys.Stats):
 			if m.activeTab == tabStats && m.width < wideCols {
 				m.stats.showLocal = !m.stats.showLocal
@@ -506,7 +511,7 @@ Pressiona qualquer tecla pra fechar.`
 func isGlobalKey(k string) bool {
 	switch k {
 	case "tab", "shift+tab", "esc", "enter", "ctrl+c", "ctrl+o",
-		"ctrl+e", "ctrl+t", "ctrl+f", "ctrl+b",
+		"ctrl+e", "ctrl+t", "ctrl+y", "ctrl+f", "ctrl+b",
 		"up", "down", "home", "end", "pgup", "pgdown":
 		// Setas + Ctrl+* nunca são caracteres digitáveis, então sempre
 		// passam por cima da input pra navegar/atalhos globais funcionarem
