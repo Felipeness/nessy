@@ -12,34 +12,34 @@ import (
 // Estrutura inspirada em ccstatusline (lines + components) com TOML
 // (tipado e legível) ao invés de JSON.
 type Config struct {
-	Theme    string `toml:"theme"`     // graphite|nord|dracula|sakura|mono
-	Style    string `toml:"style"`     // plain|powerline|capsule
-	Charset  string `toml:"charset"`   // unicode|ascii
-	AutoWrap bool   `toml:"auto_wrap"`
+	Theme    string `toml:"theme" json:"theme"`         // graphite|nord|dracula|sakura|mono
+	Style    string `toml:"style" json:"style"`         // plain|powerline|capsule
+	Charset  string `toml:"charset" json:"charset"`     // unicode|ascii
+	AutoWrap bool   `toml:"auto_wrap" json:"auto_wrap"`
 
-	Lines      []Line                   `toml:"lines"`
-	Components map[string]ComponentOpts `toml:"components"`
-	History    HistoryConfig            `toml:"history"`
+	Lines      []Line                   `toml:"lines" json:"lines"`
+	Components map[string]ComponentOpts `toml:"components" json:"components"`
+	History    HistoryConfig            `toml:"history" json:"history"`
 }
 
 // Line é uma linha do statusline — array ordenado de component names.
 type Line struct {
-	Components []string `toml:"components"`
-	Separator  string   `toml:"separator"`
+	Components []string `toml:"components" json:"components"`
+	Separator  string   `toml:"separator" json:"separator"`
 }
 
 // ComponentOpts são overrides por-component (cores, thresholds, format).
 type ComponentOpts struct {
-	WarnAt     float64 `toml:"warn_at,omitempty"`
-	CriticalAt float64 `toml:"critical_at,omitempty"`
-	Format     string  `toml:"format,omitempty"`
-	Hide       bool    `toml:"hide,omitempty"`
+	WarnAt     float64 `toml:"warn_at,omitempty" json:"warn_at,omitempty"`
+	CriticalAt float64 `toml:"critical_at,omitempty" json:"critical_at,omitempty"`
+	Format     string  `toml:"format,omitempty" json:"format,omitempty"`
+	Hide       bool    `toml:"hide,omitempty" json:"hide,omitempty"`
 }
 
 // HistoryConfig diz onde achar o daemon claude-history.
 type HistoryConfig struct {
-	Endpoint string `toml:"endpoint"`
-	Timeout  string `toml:"timeout"` // ex: "80ms"
+	Endpoint string `toml:"endpoint" json:"endpoint"`
+	Timeout  string `toml:"timeout" json:"timeout"` // ex: "80ms"
 }
 
 // TimeoutDuration parseia HistoryConfig.Timeout com fallback de 80ms.

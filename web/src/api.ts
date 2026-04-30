@@ -82,5 +82,5 @@ export const api = {
   statuslineConfigSave: (cfg: StatuslineConfig) =>
     postJSON<{ status: string; path: string }>('/api/statusline/config', cfg),
   statuslineRender: (cfg: StatuslineConfig) =>
-    postJSON<{ ansi: string }>('/api/statusline/render', { config: cfg }),
+    postJSON<{ ansi: string; html: string }>('/api/statusline/render', { config: cfg }),
 }

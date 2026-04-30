@@ -150,7 +150,10 @@ func (s *Server) handleStatuslineRender(w http.ResponseWriter, r *http.Request) 
 	cfg := *req.Config
 	cfg.History.Endpoint = ""
 	out := statusline.Render(req.MockInput, &cfg)
-	writeJSON(w, 200, map[string]string{"ansi": out})
+	writeJSON(w, 200, map[string]string{
+		"ansi": out,
+		"html": statusline.AnsiToHTML(out),
+	})
 }
 
 func defaultMockInput() *statusline.Input {

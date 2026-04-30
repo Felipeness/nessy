@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AnsiUp } from 'ansi_up'
 import {
   DndContext,
   closestCenter,
@@ -28,7 +27,7 @@ export function StudioTab() {
   const [cfg, setCfg] = useState<StatuslineConfig | null>(null)
   const [components, setComponents] = useState<StatuslineComponentMeta[]>([])
   const [themesResp, setThemesResp] = useState<StatuslineThemesResp | null>(null)
-  const [preview, setPreview] = useState('')
+  const [previewHTML, setPreviewHTML] = useState('')
   const [saveStatus, setSaveStatus] = useState('')
   const [pickerLineIdx, setPickerLineIdx] = useState<number | null>(null)
 
@@ -53,8 +52,8 @@ export function StudioTab() {
     const t = setTimeout(() => {
       api
         .statuslineRender(cfg)
-        .then((r) => setPreview(r.ansi))
-        .catch((err) => setPreview('error: ' + String(err)))
+        .then((r) => setPreviewHTML(r.html))
+        .catch((err) => setPreviewHTML('<span class="text-red-400">error: ' + String(err) + '</span>'))
     }, 150)
     return () => clearTimeout(t)
   }, [cfg])
@@ -166,7 +165,7 @@ export function StudioTab() {
       <div className="space-y-3">
         <Section title="Preview live">
           <div className="bg-black rounded p-4 font-mono text-sm overflow-x-auto">
-            <AnsiPreview ansi={preview} />
+            <AnsiPreview html={previewHTML} />
           </div>
           <div className="mt-2 text-xs text-[var(--color-muted)]">
             Mock: <code>~/dev/projects/my-app</code> · branch <code>feat/CC-1234</code> · Opus 4.7 ·
@@ -500,14 +499,9 @@ function ComponentPicker({
   )
 }
 
-// AnsiPreview converte ANSI → HTML usando ansi_up.
-function AnsiPreview({ ansi }: { ansi: string }) {
-  const html = useMemo(() => {
-    if (!ansi) return ''
-    const conv = new AnsiUp()
-    conv.use_classes = false
-    return conv.ansi_to_html(ansi)
-  }, [ansi])
+// AnsiPreview renderiza o HTML que vem pronto do backend Go (engine único —
+// AnsiToHTML em internal/statusline/html.go). Frontend não converte nada.
+function AnsiPreview({ html }: { html: string }) {
   if (!html) return <span className="text-[var(--color-muted)]">renderizando…</span>
   return <span dangerouslySetInnerHTML={{ __html: html }} />
 }
