@@ -27,6 +27,8 @@ export function StudioTab() {
   const [cfg, setCfg] = useState<StatuslineConfig | null>(null)
   const [components, setComponents] = useState<StatuslineComponentMeta[]>([])
   const [themesResp, setThemesResp] = useState<StatuslineThemesResp | null>(null)
+  const [presets, setPresets] = useState<Record<string, StatuslineConfig>>({})
+  const [presetNames, setPresetNames] = useState<string[]>([])
   const [previewHTML, setPreviewHTML] = useState('')
   const [saveStatus, setSaveStatus] = useState('')
   const [pickerLineIdx, setPickerLineIdx] = useState<number | null>(null)
@@ -37,14 +39,29 @@ export function StudioTab() {
       api.statuslineConfigGet(),
       api.statuslineComponents(),
       api.statuslineThemes(),
+      api.statuslinePresets(),
     ])
-      .then(([c, comps, ths]) => {
+      .then(([c, comps, ths, pres]) => {
         setCfg(c)
         setComponents(comps)
         setThemesResp(ths)
+        setPresets(pres.presets)
+        setPresetNames(pres.names)
       })
       .catch((err) => setSaveStatus('erro: ' + String(err)))
   }, [])
+
+  // Reset pra preset — pede confirmação só se cfg estiver "sujo" (não-vazio)
+  const resetToPreset = (name: string) => {
+    const p = presets[name]
+    if (!p) return
+    if (cfg && cfg.lines.some((l) => l.components.length > 0)) {
+      if (!confirm(`Substituir config atual pelo preset "${name}"?`)) return
+    }
+    setCfg(structuredClone(p))
+    setSaveStatus(`↺ resetado pro preset "${name}" — clique Salvar pra persistir`)
+    setTimeout(() => setSaveStatus(''), 4000)
+  }
 
   // Live preview com debounce — toda mudança em cfg dispara render.
   useEffect(() => {
@@ -148,6 +165,24 @@ export function StudioTab() {
           </div>
         </Section>
 
+        <Section title="Resetar pra preset">
+          <div className="flex gap-2 flex-wrap">
+            {presetNames.map((name) => (
+              <button
+                key={name}
+                onClick={() => resetToPreset(name)}
+                className="px-3 py-1.5 rounded text-xs border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:border-[var(--color-fg)]"
+                title={presetDescription(name)}
+              >
+                ↺ {name}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-[var(--color-muted)]">
+            Substitui a config no editor — só persiste depois de clicar em Salvar.
+          </div>
+        </Section>
+
         <div className="flex gap-2 pt-2">
           <button
             onClick={save}
@@ -224,6 +259,19 @@ claude-history statusline-install --preset compact
       )}
     </div>
   )
+}
+
+function presetDescription(name: string): string {
+  switch (name) {
+    case 'compact':
+      return '1 linha enxuta: cwd · git · model · context · cost'
+    case 'max':
+      return '2 linhas com cost_today/month, ticket, cluster, lines, time'
+    case 'powerline':
+      return 'estilo powerline com graphite e segmentos coloridos'
+    default:
+      return name
+  }
 }
 
 function Section({

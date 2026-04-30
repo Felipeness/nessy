@@ -24,6 +24,21 @@ func (s *Server) handleStatuslineComponents(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, statusline.Metas())
 }
 
+// handleStatuslinePresets devolve os presets canônicos (compact/max/powerline).
+// Studio usa pra botões "Resetar pro preset X".
+func (s *Server) handleStatuslinePresets(w http.ResponseWriter, r *http.Request) {
+	out := map[string]*statusline.Config{}
+	for _, name := range statusline.PresetNames {
+		if cfg := statusline.Presets[name]; cfg != nil {
+			out[name] = cfg
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"names":   statusline.PresetNames,
+		"presets": out,
+	})
+}
+
 func (s *Server) handleStatuslineThemes(w http.ResponseWriter, r *http.Request) {
 	type colorOut struct {
 		R uint8 `json:"r"`

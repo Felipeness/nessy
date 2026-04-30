@@ -47,6 +47,7 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/statusline", s.handleStatusline)
 	mux.HandleFunc("/api/statusline/components", s.handleStatuslineComponents)
 	mux.HandleFunc("/api/statusline/themes", s.handleStatuslineThemes)
+	mux.HandleFunc("/api/statusline/presets", s.handleStatuslinePresets)
 	mux.HandleFunc("/api/statusline/config", s.handleStatuslineConfig)
 	mux.HandleFunc("/api/statusline/render", s.handleStatuslineRender)
 }

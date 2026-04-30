@@ -83,4 +83,6 @@ export const api = {
     postJSON<{ status: string; path: string }>('/api/statusline/config', cfg),
   statuslineRender: (cfg: StatuslineConfig) =>
     postJSON<{ ansi: string; html: string }>('/api/statusline/render', { config: cfg }),
+  statuslinePresets: () =>
+    get<{ names: string[]; presets: Record<string, StatuslineConfig> }>('/api/statusline/presets'),
 }
