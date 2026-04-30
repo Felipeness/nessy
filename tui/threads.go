@@ -151,21 +151,94 @@ func (v *threadsView) MoveCursor(delta int) {
 }
 
 func (v threadsView) View(width, height int) string {
+	header := v.renderStatusHeader(width)
+	var body string
 	switch v.view {
 	case threadViewTree:
-		return v.renderTree(width)
+		body = v.renderTree(width)
 	case threadViewCards:
-		return v.renderCards(width)
+		body = v.renderCards(width)
 	case threadViewMiller:
-		return v.renderMiller(width)
+		body = v.renderMiller(width)
 	case threadViewGraph:
-		return v.renderGraph(width)
+		body = v.renderGraph(width)
 	case threadViewTimeline:
-		return v.renderTimeline(width)
+		body = v.renderTimeline(width)
 	case threadViewGalaxy:
-		return v.renderGalaxy(width, 24)
+		body = v.renderGalaxy(width, height-3)
 	}
-	return ""
+	return header + "\n" + body
+}
+
+// renderStatusHeader é uma barra que aparece em TODAS as views mostrando:
+//   view name · session N/M · branch · timestamp · cost
+// Garante que o user sempre saiba ONDE está, independente da view.
+func (v threadsView) renderStatusHeader(width int) string {
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	accent := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+
+	// View badges — todas, com a atual destacada
+	views := []string{"tree", "cards", "miller", "graph", "timeline", "galaxy"}
+	var badges []string
+	for i, name := range views {
+		if i == int(v.view) {
+			badges = append(badges, accent.Render("◉ "+name))
+		} else {
+			badges = append(badges, muted.Render("  "+name))
+		}
+	}
+	viewStrip := strings.Join(badges, "  ")
+
+	// Cursor position info
+	totalSessions := 0
+	currentIdx := 0
+	for _, row := range v.flat {
+		if row.session != nil {
+			totalSessions++
+		}
+	}
+	for i := 0; i <= v.cursor && i < len(v.flat); i++ {
+		if v.flat[i].session != nil {
+			currentIdx++
+		}
+	}
+
+	posInfo := ""
+	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
+		row := v.flat[v.cursor]
+		s := row.session
+		when := s.StartTime.Local().Format("Mon 02 · 15:04")
+		cost := ""
+		if v.pricing != nil {
+			if c, ok := v.pricing.Cost(s.Session); ok {
+				cost = fmt.Sprintf("$%.2f", c.USD)
+			}
+		}
+		posInfo = fmt.Sprintf("  %s session %d/%d  %s  %s  %s  %s",
+			muted.Render("·"),
+			currentIdx, totalSessions,
+			branchPill(row.thread.Branch),
+			muted.Render(when),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(cost),
+			muted.Render("["+s.SessionID[:8]+"]"))
+	} else {
+		posInfo = "  " + muted.Render(fmt.Sprintf("· %d threads · %d sessions total",
+			len(v.threads), totalSessions))
+	}
+
+	// Combina em 2 linhas: views badges + position
+	line1 := viewStrip
+	line2 := muted.Render("[v] alterna view  [↑↓ j/k] navega  [enter] retoma") + posInfo
+
+	// Trunca pra width
+	if lipgloss.Width(stripAnsi(line1)) > width {
+		line1 = line1[:maxInt(0, width)]
+	}
+
+	border := lipgloss.NewStyle().Foreground(colorBorder).
+		Render(strings.Repeat("─", maxInt(0, width)))
+
+	return line1 + "\n" + line2 + "\n" + border
 }
 
 // =============================================================================
@@ -359,19 +432,20 @@ func (v threadsView) renderCards(width int) string {
 // renderSingleCard renderiza UMA thread como card multi-line.
 func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string {
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
-	subdued := lipgloss.NewStyle().Foreground(colorMuted)
 	bord := colorBorder
 	bordStyle := lipgloss.NewStyle().Foreground(bord)
 
-	// Detect cursor — se algum row do flat dessa thread está selecionado
-	isCursor := false
+	// Detecta se cursor tá em alguma session dessa thread
+	cursorInThread := false
+	cursorSession := -1
 	for i, row := range v.flat {
-		if row.threadIdx == threadIdx && i == v.cursor {
-			isCursor = true
+		if row.threadIdx == threadIdx && i == v.cursor && row.session != nil {
+			cursorInThread = true
+			cursorSession = row.sessionIdx
 			break
 		}
 	}
-	if isCursor {
+	if cursorInThread {
 		bord = colorAccent
 		bordStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 	}
@@ -379,69 +453,72 @@ func (v threadsView) renderSingleCard(t *stats.Thread, w, threadIdx int) string 
 	var lines []string
 	innerW := maxInt(0, w-2)
 
-	// Top border
-	lines = append(lines, bordStyle.Render("╭"+strings.Repeat("─", innerW)+"╮"))
-
-	// Project line
-	short := shortPath(t.ProjectDir, mustHomeTUI())
-	if len(short) > w-6 {
-		short = "…" + short[len(short)-(w-7):]
-	}
-	projLine := bordStyle.Render("│ ") +
-		muted.Render("📁 "+short) +
-		strings.Repeat(" ", maxInt(0, w-2-4-lipgloss.Width(short)-1)) +
-		bordStyle.Render("│")
-	lines = append(lines, projLine)
-
-	// Branch pill line
+	// Top border com branch pill embutida no título
 	branch := t.Branch
 	if branch == "" {
 		branch = "(no branch)"
 	}
 	pill := branchPill(branch)
 	pillW := lipgloss.Width(pill)
-	branchLine := bordStyle.Render("│ ") +
-		pill +
-		strings.Repeat(" ", maxInt(0, w-2-pillW-1)) +
-		bordStyle.Render("│")
-	lines = append(lines, branchLine)
+	titleSpace := maxInt(0, innerW-pillW-3)
+	lines = append(lines, bordStyle.Render("╭─ ")+pill+
+		bordStyle.Render(" "+strings.Repeat("─", titleSpace)+"╮"))
 
-	// Stats line: ●●●○○ 5 sessions · $5.20 · 2h15m
+	// Project line
+	short := shortPath(t.ProjectDir, mustHomeTUI())
+	if lipgloss.Width(short) > w-6 {
+		short = "…" + truncRight(short, w-7)
+	}
+	lines = append(lines, padCardLine("│ "+muted.Render("📁 "+short), w, bordStyle))
+
+	// Stats: ●●●●● N sessions · dur · cost
 	dotsRendered := renderSessionDots(t.Sessions)
-	statsTxt := fmt.Sprintf(" %d sess · %s · %s",
-		len(t.Sessions),
-		fmtDuration(t.TotalDur),
-		fmt.Sprintf("$%.2f", t.TotalCost))
-	dotsW := lipgloss.Width(stripAnsi(dotsRendered))
-	statsLine := bordStyle.Render("│ ") +
-		dotsRendered +
-		muted.Render(statsTxt) +
-		strings.Repeat(" ", maxInt(0, w-2-dotsW-lipgloss.Width(statsTxt)-1)) +
-		bordStyle.Render("│")
-	lines = append(lines, statsLine)
+	statsTxt := fmt.Sprintf(" %d sess · %s · $%.2f",
+		len(t.Sessions), fmtDuration(t.TotalDur), t.TotalCost)
+	lines = append(lines, padCardLine("│ "+dotsRendered+muted.Render(statsTxt), w, bordStyle))
 
 	// Sparkline
 	spark := stats.SparklineFromThread(t)
-	sparkLine := bordStyle.Render("│ ") +
-		lipgloss.NewStyle().Foreground(colorAccent).Render(spark) +
-		strings.Repeat(" ", maxInt(0, w-2-lipgloss.Width(spark)-1)) +
-		bordStyle.Render("│")
-	lines = append(lines, sparkLine)
+	if spark != "" {
+		sparkColored := lipgloss.NewStyle().Foreground(colorAccent).Render(spark)
+		lines = append(lines, padCardLine("│ "+sparkColored, w, bordStyle))
+	}
 
-	// Latest session
-	if len(t.Sessions) > 0 {
-		latest := t.Sessions[len(t.Sessions)-1]
-		title := v.titleFor(latest.Session)
-		titleMax := w - 8
-		if titleMax > 0 && len(title) > titleMax {
-			title = title[:titleMax-1] + "…"
+	// Separator
+	sepInner := maxInt(0, w-4)
+	lines = append(lines, padCardLine("│ "+muted.Render(strings.Repeat("─", sepInner)), w, bordStyle))
+
+	// Lista as últimas N sessions com cursor highlight
+	maxSess := 5
+	startIdx := 0
+	if len(t.Sessions) > maxSess {
+		startIdx = len(t.Sessions) - maxSess
+	}
+	if startIdx > 0 {
+		lines = append(lines, padCardLine("│ "+muted.Render(fmt.Sprintf("  +%d anteriores ⌃", startIdx)), w, bordStyle))
+	}
+	for si := startIdx; si < len(t.Sessions); si++ {
+		s := t.Sessions[si]
+		dot := threadDot(s.Kind, "")
+		when := s.StartTime.Local().Format("Mon 15:04")
+		title := v.titleFor(s.Session)
+		titleMax := maxInt(8, w-22)
+		if lipgloss.Width(title) > titleMax {
+			title = truncRight(title, titleMax)
 		}
-		latestLine := bordStyle.Render("│ ") +
-			subdued.Render("↳ ") +
-			lipgloss.NewStyle().Foreground(colorFg).Render(title) +
-			strings.Repeat(" ", maxInt(0, w-2-2-lipgloss.Width(title)-1)) +
-			bordStyle.Render("│")
-		lines = append(lines, latestLine)
+		isCursorRow := cursorInThread && si == cursorSession
+
+		var rowContent string
+		if isCursorRow {
+			rowContent = lipgloss.NewStyle().
+				Background(lipgloss.Color("237")).
+				Foreground(colorAccent).Bold(true).
+				Render(fmt.Sprintf("▶ %s %s  %s", "●", when, title))
+		} else {
+			rowContent = "  " + dot + " " + muted.Render(when) + "  " +
+				lipgloss.NewStyle().Foreground(colorFg).Render(title)
+		}
+		lines = append(lines, padCardLine("│ "+rowContent, w, bordStyle))
 	}
 
 	// Bottom border
@@ -457,6 +534,14 @@ func renderSessionDots(sessions []*stats.ThreadSession) string {
 		b.WriteString(threadDot(s.Kind, "") + " ")
 	}
 	return b.String()
+}
+
+// padCardLine recebe linha "│ <content>" e adiciona "│" no fim com spacing.
+func padCardLine(prefix string, w int, bordStyle lipgloss.Style) string {
+	plain := stripAnsi(prefix)
+	currentW := lipgloss.Width(plain)
+	pad := maxInt(0, w-1-currentW)
+	return prefix + strings.Repeat(" ", pad) + bordStyle.Render("│")
 }
 
 // joinCards cola N cards lado-a-lado linha-a-linha.
@@ -597,6 +682,8 @@ func (v threadsView) renderMiller(width int) string {
 	// Pane 3: sessions da branch selecionada
 	var p3 strings.Builder
 	p3.WriteString(header.Render("SESSIONS") + "\n")
+	selBg := lipgloss.NewStyle().Background(lipgloss.Color("237")).
+		Foreground(colorAccent).Bold(true)
 	for _, t := range v.threads {
 		if t.ProjectDir != selProject || t.Branch != selBranch {
 			continue
@@ -610,11 +697,17 @@ func (v threadsView) renderMiller(width int) string {
 					cost = fmt.Sprintf("$%.2f", c.USD)
 				}
 			}
-			marker := " "
-			line := fmt.Sprintf("%s %s · %s · %s · %s",
-				marker, when, dur, cost, threadDot(s.Kind, ""))
-			if selSession != nil && s.SessionID == selSession.SessionID {
-				line = sel.Render("▶ " + when + " · " + dur + " · " + cost + " ●")
+			isSel := selSession != nil && s.SessionID == selSession.SessionID
+			content := fmt.Sprintf("%s · %s · %s",
+				when, dur, cost)
+			if s.Kind == "compact" {
+				content += " ↻"
+			}
+			var line string
+			if isSel {
+				line = selBg.Render("▶ " + content)
+			} else {
+				line = "  " + muted.Render(content)
 			}
 			p3.WriteString(line + "\n")
 		}
@@ -686,27 +779,18 @@ func (v threadsView) renderGraph(width int) string {
 	if len(v.threads) == 0 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
 	}
-	// Cada thread vira uma "lane" com cor própria. Sessions de threads diferentes
-	// aparecem em ordem cronológica global, com símbolos `●` na lane correspondente
-	// e `│` nas outras lanes pra mostrar continuidade.
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
 
 	// Cores rotativas pra lanes
 	laneColors := []lipgloss.Color{
-		lipgloss.Color("#7dd3fc"), // cyan
-		lipgloss.Color("#f472b6"), // magenta
-		lipgloss.Color("#fbbf24"), // yellow
-		lipgloss.Color("#34d399"), // green
-		lipgloss.Color("#60a5fa"), // blue
-		lipgloss.Color("#f87171"), // red
+		"#7dd3fc", "#f472b6", "#fbbf24", "#34d399", "#60a5fa", "#f87171",
 	}
-
-	// Assign lane index to each thread
 	threadLane := map[*stats.Thread]int{}
 	for i, t := range v.threads {
 		threadLane[t] = i % len(laneColors)
 	}
 
-	// Flat list of all sessions globally sorted by start time
+	// Flat list ordenada cronologicamente
 	type globalEntry struct {
 		t *stats.Thread
 		s *stats.ThreadSession
@@ -717,17 +801,13 @@ func (v threadsView) renderGraph(width int) string {
 			all = append(all, globalEntry{t, s})
 		}
 	}
-	sortByTime := func(a, b globalEntry) bool {
-		return a.s.StartTime.Before(b.s.StartTime)
-	}
 	for i := 1; i < len(all); i++ {
-		for j := i; j > 0 && sortByTime(all[j], all[j-1]); j-- {
+		for j := i; j > 0 && all[j].s.StartTime.Before(all[j-1].s.StartTime); j-- {
 			all[j], all[j-1] = all[j-1], all[j]
 		}
 	}
 
-	// Track which threads are "alive" at each row — first session = appears,
-	// last session = disappears, intermediate = `│`. Determine first/last:
+	// Identifica primeiro e último idx de cada thread
 	firstIdx := map[*stats.Thread]int{}
 	lastIdx := map[*stats.Thread]int{}
 	for i, e := range all {
@@ -737,57 +817,85 @@ func (v threadsView) renderGraph(width int) string {
 		lastIdx[e.t] = i
 	}
 
-	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	// Header com lane labels
 	var b strings.Builder
+	var laneHeader strings.Builder
+	for _, t := range v.threads {
+		col := laneColors[threadLane[t]]
+		laneHeader.WriteString(lipgloss.NewStyle().Foreground(col).Bold(true).Render("│") + " ")
+	}
+	b.WriteString(laneHeader.String() + "  " + muted.Render("legenda das lanes →  ") +
+		laneLegend(v.threads, laneColors, threadLane) + "\n")
+	b.WriteString(muted.Render(strings.Repeat("─", maxInt(0, width))) + "\n")
 
+	// Cada session = 1 row
 	for i, e := range all {
-		// Build the lane prefix
-		var lanePrefix strings.Builder
-		for j, t := range v.threads {
-			lane := threadLane[t]
-			col := laneColors[lane]
+		var lanes strings.Builder
+		for _, t := range v.threads {
+			col := laneColors[threadLane[t]]
 			active := i >= firstIdx[t] && i <= lastIdx[t]
 			isThis := t == e.t
 			ch := " "
 			if isThis {
 				if e.s.Kind == "compact" {
-					ch = lipgloss.NewStyle().Foreground(colorWarn).Render("◉")
+					ch = lipgloss.NewStyle().Foreground(colorWarn).Bold(true).Render("◉")
 				} else {
-					ch = lipgloss.NewStyle().Foreground(col).Render("●")
+					ch = lipgloss.NewStyle().Foreground(col).Bold(true).Render("●")
 				}
 			} else if active {
 				ch = lipgloss.NewStyle().Foreground(col).Render("│")
 			}
-			lanePrefix.WriteString(ch + "  ")
-			_ = j
+			lanes.WriteString(ch + " ")
 		}
 
-		// Right-side: branch pill + session info
-		isCursor := false
-		idx := v.flatRowIndex(e.t, e.s)
-		if idx == v.cursor {
-			isCursor = true
-		}
+		isCursor := v.flatRowIndex(e.t, e.s) == v.cursor
 		when := e.s.StartTime.Local().Format("Mon 15:04")
 		title := v.titleFor(e.s.Session)
-		title = truncRight(title, 50)
+		titleMax := maxInt(20, width-len(v.threads)*2-50)
+		title = truncRight(title, titleMax)
 		gapStr := ""
 		if e.s.Kind == "compact" {
-			gapStr = lipgloss.NewStyle().Foreground(colorWarn).Render(fmt.Sprintf(" ↻ %s", humanDurShort(e.s.GapFromPrev)))
+			gapStr = " " + lipgloss.NewStyle().Foreground(colorWarn).Render(
+				fmt.Sprintf("↻%s", humanDurShort(e.s.GapFromPrev)))
 		}
 
-		row := lanePrefix.String() +
-			"  " + branchPill(e.t.Branch) +
-			"  " + muted.Render(when) +
-			"  " + lipgloss.NewStyle().Foreground(colorFg).Render(title) +
-			gapStr +
-			"  " + muted.Render("["+e.s.SessionID[:8]+"]")
+		var row string
 		if isCursor {
-			row = lipgloss.NewStyle().Background(lipgloss.Color("237")).Render(row)
+			// Selection bar full width
+			marker := lipgloss.NewStyle().
+				Background(lipgloss.Color("237")).
+				Foreground(colorAccent).Bold(true).
+				Render(fmt.Sprintf("▶ %s · %s · %s · [%s]",
+					e.t.Branch, when, title, e.s.SessionID[:8]))
+			plain := stripAnsi(marker)
+			pad := maxInt(0, width-lipgloss.Width(plain)-lipgloss.Width(stripAnsi(lanes.String()))-2)
+			row = lanes.String() + " " + marker +
+				lipgloss.NewStyle().Background(lipgloss.Color("237")).Render(strings.Repeat(" ", pad))
+		} else {
+			row = lanes.String() + " " +
+				branchPill(e.t.Branch) + " " +
+				muted.Render(when) + " " +
+				lipgloss.NewStyle().Foreground(colorFg).Render(title) +
+				gapStr + " " +
+				muted.Render("["+e.s.SessionID[:8]+"]")
 		}
 		b.WriteString(row + "\n")
 	}
 	return b.String()
+}
+
+// laneLegend retorna "feat/CC-1234 · main · feat/auth ..." colorido.
+func laneLegend(threads []*stats.Thread, colors []lipgloss.Color, lane map[*stats.Thread]int) string {
+	var parts []string
+	for _, t := range threads {
+		col := colors[lane[t]]
+		b := t.Branch
+		if b == "" {
+			b = "(no branch)"
+		}
+		parts = append(parts, lipgloss.NewStyle().Foreground(col).Render(b))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // =============================================================================
@@ -867,20 +975,38 @@ func (v threadsView) renderTimeline(width int) string {
 	// Separator
 	b.WriteString(strings.Repeat(" ", labelW+2) + muted.Render(strings.Repeat("─", timelineW)) + "\n")
 
+	// Identifica session selecionada (pra highlight)
+	var selSession *model.Session
+	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
+		selSession = v.flat[v.cursor].session.Session
+	}
+
 	// Thread rows
 	for _, t := range v.threads {
 		branch := t.Branch
 		if branch == "" {
 			branch = "(no branch)"
 		}
-		// Label
-		label := truncRight(branch, labelW-1)
-		b.WriteString(branchPill(label) + strings.Repeat(" ", maxInt(0, labelW-lipgloss.Width(branchPill(label)))) + "  ")
+		// Label com cursor marker se cursor estiver em session dessa thread
+		threadHasCursor := false
+		for _, s := range t.Sessions {
+			if selSession != nil && s.SessionID == selSession.SessionID {
+				threadHasCursor = true
+				break
+			}
+		}
+		marker := "  "
+		if threadHasCursor {
+			marker = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("▶ ")
+		}
+		label := truncRight(branch, labelW-3)
+		labelStr := marker + branchPill(label)
+		b.WriteString(labelStr + strings.Repeat(" ", maxInt(0, labelW-lipgloss.Width(stripAnsi(labelStr)))) + "  ")
 
-		// Build line of sessions
+		// Build line de chars com posições
 		line := []rune(strings.Repeat(" ", timelineW))
-		col := branchColor(t.Branch)
-		_ = col
+		// Track quais positions são selected
+		selX := -1
 		for i, s := range t.Sessions {
 			x := timeToX(s.StartTime)
 			ch := '●'
@@ -890,7 +1016,9 @@ func (v threadsView) renderTimeline(width int) string {
 			if x < len(line) {
 				line[x] = ch
 			}
-			// Connect to previous session in same thread with ─
+			if selSession != nil && s.SessionID == selSession.SessionID {
+				selX = x
+			}
 			if i > 0 {
 				prev := t.Sessions[i-1]
 				px := timeToX(prev.EndTime)
@@ -901,12 +1029,26 @@ func (v threadsView) renderTimeline(width int) string {
 				}
 			}
 		}
-		// Color the line
-		colored := lipgloss.NewStyle().Foreground(branchColor(t.Branch)).Render(string(line))
-		b.WriteString(colored)
-
-		// Right-side: session count + cost
-		b.WriteString("  " + muted.Render(fmt.Sprintf("%d · $%.2f", len(t.Sessions), t.TotalCost)) + "\n")
+		// Renderiza com cores
+		col := branchColor(t.Branch)
+		var colored strings.Builder
+		for i, r := range line {
+			s := string(r)
+			switch {
+			case i == selX:
+				// Highlight selected session
+				colored.WriteString(lipgloss.NewStyle().
+					Background(lipgloss.Color("237")).
+					Foreground(colorAccent).Bold(true).Render("◉"))
+			case r == '◉':
+				colored.WriteString(lipgloss.NewStyle().Foreground(colorWarn).Render(s))
+			default:
+				colored.WriteString(lipgloss.NewStyle().Foreground(col).Render(s))
+			}
+		}
+		b.WriteString(colored.String())
+		b.WriteString("  " + muted.Render(fmt.Sprintf("%d · $%.2f",
+			len(t.Sessions), t.TotalCost)) + "\n")
 	}
 
 	// Footer separator
@@ -1238,17 +1380,37 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		col := projectColors[e.a.t.ProjectDir]
 		canvas.line(int(e.a.x), int(e.a.y), int(e.b.x), int(e.b.y), col, e.dashed)
 	}
-	// Draw nodes
+	// Identifica session selecionada
+	var selSession *model.Session
+	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
+		selSession = v.flat[v.cursor].session.Session
+	}
+
+	// Draw nodes — selected node ganha "anel" branco em volta
 	for _, n := range nodes {
 		col := projectColors[n.t.ProjectDir]
+		isSel := selSession != nil && n.s.SessionID == selSession.SessionID
+		if isSel {
+			// Anel branco maior em volta
+			canvas.circle(int(n.x), int(n.y), n.r+2, lipgloss.Color("#ffffff"))
+		}
 		canvas.circle(int(n.x), int(n.y), n.r, col)
 	}
 
-	// Render + legend
+	// Render + legend + selected info
 	out := canvas.render()
 
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 	var legend strings.Builder
+	if selSession != nil {
+		// Highlight da session selecionada (acima da legenda)
+		legend.WriteString(lipgloss.NewStyle().
+			Background(lipgloss.Color("237")).
+			Foreground(colorAccent).Bold(true).
+			Render(fmt.Sprintf("▶ session selecionada: [%s] %s",
+				selSession.SessionID[:8],
+				truncRight(v.titleFor(selSession), 60))) + "\n")
+	}
 	legend.WriteString(muted.Render("─── projetos ───") + "\n")
 	for proj, col := range projectColors {
 		short := shortPath(proj, mustHomeTUI())
