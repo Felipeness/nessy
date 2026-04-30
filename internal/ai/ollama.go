@@ -117,15 +117,19 @@ type ChatMessage struct {
 }
 
 // Chat chama /api/chat (non-streaming) com a conversa completa. Diferente
-// de Generate, aceita system prompt + multi-turn naturalmente.
+// de Generate, aceita system prompt + multi-turn naturalmente. Temperature
+// 0.1 — queremos respostas consistentes que fiquem coladas nas fontes,
+// não criatividade.
 func (c *Client) Chat(ctx context.Context, model string, messages []ChatMessage) (string, error) {
 	body := map[string]any{
 		"model":    model,
 		"messages": messages,
 		"stream":   false,
 		"options": map[string]any{
-			"temperature": 0.4,
-			"num_predict": 2048,
+			"temperature":     0.1,
+			"top_p":           0.9,
+			"repeat_penalty":  1.1,
+			"num_predict":     2048,
 		},
 	}
 	buf, _ := json.Marshal(body)
