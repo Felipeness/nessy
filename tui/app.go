@@ -399,6 +399,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stats.showLocal = !m.stats.showLocal
 			}
 			return m, nil
+		case keyMatches(k, keys.StatsMode):
+			if m.activeTab == tabStats {
+				m.stats.ToggleMode()
+			}
+			return m, nil
+		case keyMatches(k, keys.StatsPeriod):
+			if m.activeTab == tabStats {
+				m.stats.TogglePeriod()
+			}
+			return m, nil
 		case keyMatches(k, keys.Refresh):
 			m.status = "refreshing…"
 			m.refreshing = true

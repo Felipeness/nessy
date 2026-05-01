@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/felipeness/claude-history/internal/model"
@@ -11,25 +12,140 @@ import (
 	"github.com/felipeness/claude-history/internal/stats"
 )
 
+type statsMode int
+
+const (
+	statsModeOverview statsMode = iota // dashboard (heatmap + cards)
+	statsModeModels                    // line chart por modelo + breakdown
+	statsModeDetailed                  // analytics detalhada (renderGlobal antigo)
+)
+
+type statsPeriod int
+
+const (
+	periodAll statsPeriod = iota
+	period7d
+	period30d
+)
+
+func (p statsPeriod) label() string {
+	switch p {
+	case period7d:
+		return "Last 7 days"
+	case period30d:
+		return "Last 30 days"
+	default:
+		return "All time"
+	}
+}
+
+func (p statsPeriod) days() int {
+	switch p {
+	case period7d:
+		return 7
+	case period30d:
+		return 30
+	default:
+		return 0 // 0 = sem filtro
+	}
+}
+
 type statsView struct {
 	sessions  []*model.Session
 	pricing   *pricing.Pricing
 	showLocal bool
+	mode      statsMode
+	period    statsPeriod
 }
 
 func newStatsView(sessions []*model.Session, p *pricing.Pricing) statsView {
-	return statsView{sessions: sessions, pricing: p}
+	return statsView{sessions: sessions, pricing: p, mode: statsModeOverview, period: periodAll}
 }
 
+// ToggleMode cicla overview → models → detailed → overview.
+func (v *statsView) ToggleMode() {
+	v.mode = (v.mode + 1) % 3
+}
+
+// TogglePeriod cicla all → 7d → 30d → all.
+func (v *statsView) TogglePeriod() {
+	v.period = (v.period + 1) % 3
+}
+
+// filteredSessions aplica o filtro de período ao slice. Retorna slice filtrado
+// (pode ser o original se period == all).
+func (v statsView) filteredSessions() []*model.Session {
+	d := v.period.days()
+	if d == 0 {
+		return v.sessions
+	}
+	cutoff := time.Now().Add(-time.Duration(d) * 24 * time.Hour)
+	var out []*model.Session
+	for _, s := range v.sessions {
+		if s.StartTime.After(cutoff) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// renderGlobal é o dispatcher: header com modos + filtro + corpo do modo selecionado.
 func (v statsView) renderGlobal(width int) string {
+	var out strings.Builder
+	out.WriteString(v.renderModeHeader(width) + "\n")
+	switch v.mode {
+	case statsModeOverview:
+		out.WriteString(v.renderOverview(width))
+	case statsModeModels:
+		out.WriteString(v.renderModels(width))
+	default:
+		out.WriteString(v.renderDetailed(width))
+	}
+	return out.String()
+}
+
+// renderModeHeader desenha sub-tabs Overview/Models/Detailed e filtro de período.
+func (v statsView) renderModeHeader(width int) string {
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	active := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Underline(true)
+	inactive := muted
+
+	mkTab := func(label string, mine statsMode) string {
+		if v.mode == mine {
+			return active.Render(label)
+		}
+		return inactive.Render(label)
+	}
+	tabs := mkTab("Overview", statsModeOverview) + "  " +
+		mkTab("Models", statsModeModels) + "  " +
+		mkTab("Detailed", statsModeDetailed)
+
+	mkPeriod := func(label string, mine statsPeriod) string {
+		if v.period == mine {
+			return active.Render(label)
+		}
+		return inactive.Render(label)
+	}
+	periodStrip := mkPeriod("All time", periodAll) + "  " +
+		mkPeriod("Last 7 days", period7d) + "  " +
+		mkPeriod("Last 30 days", period30d)
+
+	hint := muted.Render("[m] modo  [p] período")
+	border := muted.Render(strings.Repeat("─", maxInt(0, width)))
+	return tabs + "\n" + periodStrip + "    " + hint + "\n" + border
+}
+
+// renderDetailed é o renderGlobal antigo — análise extensa.
+func (v statsView) renderDetailed(width int) string {
 	var b strings.Builder
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	sessions := v.filteredSessions()
 
 	totalMsgs := 0
 	totalCostUSD := 0.0
 	costByProject := map[string]float64{}
 	toolGlobal := map[string]int{}
-	for _, s := range v.sessions {
+	for _, s := range sessions {
 		totalMsgs += s.MessageCount
 		if v.pricing != nil {
 			if cost, ok := v.pricing.Cost(s); ok {
@@ -43,7 +159,7 @@ func (v statsView) renderGlobal(width int) string {
 	}
 
 	// C3 — Custo cumulativo + projeção
-	mc := stats.CostThisMonth(v.sessions, v.pricing)
+	mc := stats.CostThisMonth(sessions, v.pricing)
 	fmt.Fprintln(&b, header.Render("📅 Mês atual"))
 	fmt.Fprintf(&b, "Acumulado: $%.2f · Hoje: $%.2f · Projeção fim mês: $%.2f\n",
 		mc.Accumulated, mc.Today, mc.Projection)
@@ -55,7 +171,7 @@ func (v statsView) renderGlobal(width int) string {
 	b.WriteByte('\n')
 
 	// C7 — Cache savings
-	savings := stats.CacheSavings(v.sessions, v.pricing, 30)
+	savings := stats.CacheSavings(sessions, v.pricing, 30)
 	if savings > 0 {
 		fmt.Fprintln(&b, header.Render("💾 Cache savings (30d)"))
 		fmt.Fprintf(&b, "$%.2f economizados em cache hits\n\n", savings)
@@ -63,7 +179,7 @@ func (v statsView) renderGlobal(width int) string {
 
 	// C1 — Heatmap hora × dia
 	fmt.Fprintln(&b, header.Render("🔥 Atividade (12 semanas)"))
-	grid := stats.HeatmapGrid(v.sessions, 12)
+	grid := stats.HeatmapGrid(sessions, 12)
 	hourLabels := []string{"00-04", "04-08", "08-12", "12-16", "16-20", "20-24"}
 	dayLabels := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 	fmt.Fprintf(&b, "       %s\n", strings.Join(dayLabels, " "))
@@ -87,7 +203,7 @@ func (v statsView) renderGlobal(width int) string {
 	b.WriteByte('\n')
 
 	// C2 — Distribuição modelos
-	dist := stats.ModelDistribution(v.sessions)
+	dist := stats.ModelDistribution(sessions)
 	fmt.Fprintln(&b, header.Render("🤖 Distribuição de modelos"))
 	type kv struct {
 		k string
@@ -114,14 +230,14 @@ func (v statsView) renderGlobal(width int) string {
 	// Sessions / Msgs / Custo
 	fmt.Fprintln(&b, header.Render("📊 Total"))
 	fmt.Fprintf(&b, "Sessions: %d · Msgs: %d · Custo: $%.2f USD\n",
-		len(v.sessions), totalMsgs, totalCostUSD)
+		len(sessions), totalMsgs, totalCostUSD)
 	if v.pricing != nil && v.pricing.BRLRate > 0 {
 		fmt.Fprintf(&b, "(~R$ %.2f a câmbio %.2f)\n", totalCostUSD*v.pricing.BRLRate, v.pricing.BRLRate)
 	}
 	b.WriteByte('\n')
 
 	// Tendências
-	wd := stats.WeekDeltaFor(v.sessions, v.pricing)
+	wd := stats.WeekDeltaFor(sessions, v.pricing)
 	fmt.Fprintln(&b, header.Render("📈 Esta semana vs anterior"))
 	fmt.Fprintf(&b, "Sessions  %d → %d  %s\n", wd.LastWeek.Sessions, wd.ThisWeek.Sessions,
 		deltaArrow(float64(wd.ThisWeek.Sessions), float64(wd.LastWeek.Sessions)))
@@ -158,7 +274,7 @@ func (v statsView) renderGlobal(width int) string {
 
 	// C5 — Long-tail
 	fmt.Fprintln(&b, header.Render("🐢 Top 5 mais caras"))
-	for _, s := range stats.LongTailByCost(append([]*model.Session{}, v.sessions...), v.pricing, 5) {
+	for _, s := range stats.LongTailByCost(append([]*model.Session{}, sessions...), v.pricing, 5) {
 		c, _ := v.pricing.Cost(s)
 		fmt.Fprintf(&b, "  $%-7.2f %s  %d msgs  %s\n",
 			c.USD, s.SessionID[:8], s.MessageCount, fmtDuration(s.Duration()))
@@ -167,7 +283,7 @@ func (v statsView) renderGlobal(width int) string {
 
 	// F1 — Top palavras
 	fmt.Fprintln(&b, header.Render("🗣️ Suas palavras mais usadas"))
-	words := stats.TopWords(v.sessions, 15)
+	words := stats.TopWords(sessions, 15)
 	for i, w := range words {
 		if i >= 15 {
 			break
@@ -180,7 +296,7 @@ func (v statsView) renderGlobal(width int) string {
 	b.WriteByte('\n')
 
 	// F2 — Padrões de retrabalho
-	rate, hits, totalMsgs := stats.ErrorRate(v.sessions)
+	rate, hits, totalMsgs := stats.ErrorRate(sessions)
 	rateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
 	rateLabel := "saudável"
 	switch {
@@ -197,7 +313,7 @@ func (v statsView) renderGlobal(width int) string {
 
 	// F3 — Prefixos comuns
 	fmt.Fprintln(&b, header.Render("✏️ Como você inicia mensagens"))
-	prefs := stats.TopPrefixes(v.sessions, 8)
+	prefs := stats.TopPrefixes(sessions, 8)
 	for _, p := range prefs {
 		fmt.Fprintf(&b, "  %-15s %d\n", p.Word, p.Count)
 	}
@@ -205,7 +321,7 @@ func (v statsView) renderGlobal(width int) string {
 
 	// F4 — Horário de pico
 	fmt.Fprintln(&b, header.Render("⏰ Quando você usa Claude Code"))
-	bins := stats.PeakHour(v.sessions)
+	bins := stats.PeakHour(sessions)
 	binsSlice := bins[:]
 	fmt.Fprintf(&b, "%s\n", Sparkline(binsSlice))
 	fmt.Fprintln(&b, "0h──────6h──────12h──────18h──────24h")
@@ -235,6 +351,329 @@ func (v statsView) renderGlobal(width int) string {
 		}
 		bar := BarChart(fmt.Sprintf("%-15s", p.k), float64(p.v), float64(maxTool), 18, toolColor(p.k))
 		fmt.Fprintf(&b, "%s %d\n", bar, p.v)
+	}
+
+	return lipgloss.NewStyle().Width(width).Render(b.String())
+}
+
+// =============================================================================
+// renderOverview — dashboard estilo /status do Claude Code:
+//   1. Calendar heatmap GitHub-style (Mon-Sun × 12 meses)
+//   2. Cards com métricas resumidas
+// =============================================================================
+
+func (v statsView) renderOverview(width int) string {
+	sessions := v.filteredSessions()
+	if len(sessions) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"(nenhuma session no período " + v.period.label() + ")")
+	}
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	var b strings.Builder
+
+	// Heatmap calendário — 12 meses, Mon..Sun rows × N weeks cols
+	months := 12
+	if v.period == period7d {
+		months = 1
+	} else if v.period == period30d {
+		months = 2
+	}
+	grid, firstMonday, weeks := stats.CalendarHeatmap(sessions, months)
+	maxV := 1
+	for _, row := range grid {
+		for _, c := range row {
+			if c > maxV {
+				maxV = c
+			}
+		}
+	}
+	chars := []string{"·", "░", "▒", "▓", "█"}
+	colors := []lipgloss.Color{colorMuted, "#16573a", "#1f7a4d", "#2e9d61", "#3fbf76"}
+
+	// Header com mês labels (uma label por coluna onde o mês vira)
+	b.WriteString("       ") // 7 espaços pra alinhar com day labels (4) + 3 padding
+	monthLine := []rune(strings.Repeat(" ", weeks*2))
+	prevMonth := ""
+	for w := 0; w < weeks; w++ {
+		day := firstMonday.AddDate(0, 0, w*7)
+		m := day.Format("Jan")
+		if m != prevMonth {
+			for i, r := range []rune(m) {
+				if w*2+i < len(monthLine) {
+					monthLine[w*2+i] = r
+				}
+			}
+			prevMonth = m
+		}
+	}
+	b.WriteString(muted.Render(string(monthLine)) + "\n")
+
+	// Day rows (Mon..Sun, label só pra Mon/Wed/Fri)
+	dayLabels := []string{"Mon", "   ", "Wed", "   ", "Fri", "   ", "   "}
+	for r := 0; r < 7; r++ {
+		b.WriteString("   " + muted.Render(dayLabels[r]) + " ")
+		for w := 0; w < weeks; w++ {
+			val := grid[r][w]
+			idx := 0
+			if maxV > 0 {
+				idx = val * (len(chars) - 1) / maxV
+			}
+			ch := chars[idx]
+			b.WriteString(lipgloss.NewStyle().Foreground(colors[idx]).Render(ch + " "))
+		}
+		b.WriteString("\n")
+	}
+
+	// Legend
+	b.WriteString("\n   " + muted.Render("Less "))
+	for i := 0; i < len(chars); i++ {
+		b.WriteString(lipgloss.NewStyle().Foreground(colors[i]).Render(chars[i] + " "))
+	}
+	b.WriteString(muted.Render("More") + "\n\n")
+
+	// Cards de métricas
+	ov := stats.BuildOverview(sessions, v.pricing)
+	cardL := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	val := lipgloss.NewStyle().Foreground(colorFg)
+
+	twoCol := func(l1, v1, l2, v2 string) string {
+		left := fmt.Sprintf("   %s %s",
+			cardL.Render(fmt.Sprintf("%-18s", l1+":")),
+			val.Render(v1))
+		right := fmt.Sprintf("%s %s",
+			cardL.Render(fmt.Sprintf("%-18s", l2+":")),
+			val.Render(v2))
+		// padding entre colunas
+		leftW := lipgloss.Width(stripAnsi(left))
+		pad := maxInt(2, 44-leftW)
+		return left + strings.Repeat(" ", pad) + right + "\n"
+	}
+
+	mostActive := "—"
+	if !ov.MostActiveDay.IsZero() {
+		mostActive = fmt.Sprintf("%s (%d sessions)",
+			ov.MostActiveDay.Format("Jan 02"), ov.MostActiveCount)
+	}
+	streakRange := fmt.Sprintf("%d/%d", ov.ActiveDays, ov.TotalDays)
+
+	b.WriteString(twoCol("Favorite model", modelShort(ov.FavoriteModel),
+		"Total tokens", humanizeTokens(ov.TotalTokens)))
+	b.WriteString(twoCol("Sessions", fmt.Sprintf("%d", ov.TotalSessions),
+		"Longest session", fmtDuration(ov.LongestSession)))
+	b.WriteString(twoCol("Active days", streakRange,
+		"Longest streak", fmt.Sprintf("%d days", ov.LongestStreak)))
+	b.WriteString(twoCol("Most active day", mostActive,
+		"Current streak", fmt.Sprintf("%d days", ov.CurrentStreak)))
+	b.WriteString(twoCol("Total cost", fmt.Sprintf("$%.2f USD", ov.TotalCostUSD),
+		"Total messages", fmt.Sprintf("%d", ov.TotalMessages)))
+
+	// Comparação divertida — tokens equivalentes a livros
+	// "To Kill a Mockingbird" tem ~100k tokens; usa essa unidade
+	b.WriteString("\n")
+	if ov.TotalTokens > 100_000 {
+		books := float64(ov.TotalTokens) / 100_000
+		b.WriteString("   " + muted.Render(fmt.Sprintf(
+			"Você usou ~%.1fx mais tokens que To Kill a Mockingbird (~100k tokens/livro).",
+			books)) + "\n")
+	}
+
+	return lipgloss.NewStyle().Width(width).Render(b.String())
+}
+
+// humanizeTokens formata número de tokens em k/m/b com 1 casa decimal.
+func humanizeTokens(n int64) string {
+	switch {
+	case n >= 1_000_000_000:
+		return fmt.Sprintf("%.1fb", float64(n)/1_000_000_000)
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fm", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// =============================================================================
+// renderModels — line chart tokens/dia por modelo + breakdown por modelo
+// =============================================================================
+
+func (v statsView) renderModels(width int) string {
+	sessions := v.filteredSessions()
+	if len(sessions) == 0 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"(nenhuma session no período " + v.period.label() + ")")
+	}
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	var b strings.Builder
+
+	// Agrega tokens por dia × modelo
+	type dayKey struct {
+		day   string
+		model string
+	}
+	tokens := map[dayKey]int64{}
+	dayList := []string{}
+	daySeen := map[string]bool{}
+	modelSet := map[string]bool{}
+
+	for _, s := range sessions {
+		k := s.StartTime.Local().Format("2006-01-02")
+		m := s.Model
+		if m == "" {
+			m = "(unknown)"
+		}
+		tokens[dayKey{k, m}] += s.TotalTokens()
+		modelSet[m] = true
+		if !daySeen[k] {
+			daySeen[k] = true
+			dayList = append(dayList, k)
+		}
+	}
+	sort.Strings(dayList)
+	if len(dayList) == 0 {
+		return ""
+	}
+	// Limita a 30 dias mais recentes pra caber no chart
+	if len(dayList) > 30 {
+		dayList = dayList[len(dayList)-30:]
+	}
+
+	var models []string
+	for m := range modelSet {
+		models = append(models, m)
+	}
+	sort.Strings(models)
+
+	// Compute total per day (somando models) pro chart "stacked"
+	total := make([]int64, len(dayList))
+	for i, d := range dayList {
+		var sum int64
+		for _, m := range models {
+			sum += tokens[dayKey{d, m}]
+		}
+		total[i] = sum
+	}
+	var maxTokens int64
+	for _, v := range total {
+		if v > maxTokens {
+			maxTokens = v
+		}
+	}
+
+	// Header
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorAccent).
+		Render(" Tokens per Day") + "\n\n")
+
+	// Line chart simples — vertical bars proporcional ao total
+	chartH := 8
+	chartW := width - 12
+	if chartW < 30 {
+		chartW = 30
+	}
+	cellW := chartW / maxInt(1, len(dayList))
+	if cellW < 1 {
+		cellW = 1
+	}
+
+	// Y-axis labels
+	yLabels := []string{}
+	for i := chartH - 1; i >= 0; i-- {
+		v := float64(maxTokens) * float64(i) / float64(maxInt(1, chartH-1))
+		yLabels = append(yLabels, humanizeTokens(int64(v)))
+	}
+
+	// Render rows
+	for row := 0; row < chartH; row++ {
+		threshold := float64(maxTokens) * float64(chartH-1-row) / float64(maxInt(1, chartH-1))
+		b.WriteString(fmt.Sprintf("%6s ┤", yLabels[row]))
+		for _, t := range total {
+			ch := " "
+			if float64(t) >= threshold && threshold > 0 {
+				ch = "▮"
+			}
+			styled := lipgloss.NewStyle().Foreground(colorAccent).Render(ch)
+			b.WriteString(styled + strings.Repeat(" ", maxInt(0, cellW-1)))
+		}
+		b.WriteString("\n")
+	}
+	// X-axis
+	b.WriteString("       └" + strings.Repeat("─", cellW*len(dayList)) + "\n")
+	// X-axis labels (every ~5 days)
+	b.WriteString("        ")
+	for i, d := range dayList {
+		t, _ := time.Parse("2006-01-02", d)
+		if i%5 == 0 || i == len(dayList)-1 {
+			lbl := t.Format("Jan 02")
+			b.WriteString(muted.Render(lbl))
+			pad := maxInt(0, cellW*5-len(lbl))
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+	}
+	b.WriteString("\n\n")
+
+	// Legend de modelos (chips coloridos)
+	for _, m := range models {
+		b.WriteString(lipgloss.NewStyle().Foreground(ModelColor(m)).Render("●") +
+			" " + modelShort(m) + "  ")
+	}
+	b.WriteString("\n\n")
+
+	// Breakdown por modelo: tokens in/out + percentual
+	var totalAll int64
+	perModel := map[string]struct {
+		in, out, total int64
+		sessions       int
+	}{}
+	for _, s := range sessions {
+		m := s.Model
+		if m == "" {
+			m = "(unknown)"
+		}
+		x := perModel[m]
+		x.in += s.InputTokens + s.CacheCreationTokens + s.CacheReadTokens
+		x.out += s.OutputTokens
+		x.total += s.TotalTokens()
+		x.sessions++
+		perModel[m] = x
+		totalAll += s.TotalTokens()
+	}
+	// Sort por total desc
+	type modelStat struct {
+		m              string
+		in, out, total int64
+		sessions       int
+	}
+	var stats2 []modelStat
+	for m, x := range perModel {
+		stats2 = append(stats2, modelStat{m, x.in, x.out, x.total, x.sessions})
+	}
+	sort.Slice(stats2, func(i, j int) bool {
+		return stats2[i].total > stats2[j].total
+	})
+
+	// 2 colunas se couber
+	cols := 1
+	if width >= 80 {
+		cols = 2
+	}
+	for i, s := range stats2 {
+		pct := 0.0
+		if totalAll > 0 {
+			pct = float64(s.total) / float64(totalAll) * 100
+		}
+		dot := lipgloss.NewStyle().Foreground(ModelColor(s.m)).Render("●")
+		title := fmt.Sprintf("%s %s %s", dot,
+			lipgloss.NewStyle().Bold(true).Render(modelShort(s.m)),
+			muted.Render(fmt.Sprintf("(%.1f%%)", pct)))
+		body := fmt.Sprintf("    In: %s · Out: %s · %d sessions",
+			humanizeTokens(s.in), humanizeTokens(s.out), s.sessions)
+		b.WriteString(title + "\n" + muted.Render(body))
+		if cols == 2 && i%2 == 0 && i+1 < len(stats2) {
+			b.WriteString("    ")
+		} else {
+			b.WriteString("\n")
+		}
 	}
 
 	return lipgloss.NewStyle().Width(width).Render(b.String())

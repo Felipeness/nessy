@@ -42,8 +42,10 @@ type keymap struct {
 	Tab8    key.Binding
 	Tab9    key.Binding
 	Tab10   key.Binding
-	NessClear  key.Binding
-	ViewToggle key.Binding
+	NessClear   key.Binding
+	ViewToggle  key.Binding
+	StatsMode   key.Binding
+	StatsPeriod key.Binding
 }
 
 var keys = keymap{
@@ -87,8 +89,10 @@ var keys = keymap{
 	Tab8:    key.NewBinding(key.WithKeys("8"), key.WithHelp("8", "→ AI")),
 	Tab9:    key.NewBinding(key.WithKeys("9"), key.WithHelp("9", "→ Ness IA")),
 	Tab10:   key.NewBinding(key.WithKeys("0"), key.WithHelp("0", "→ Threads")),
-	NessClear: key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("ctrl+l", "[Ness] limpar conversa")),
-	ViewToggle: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "[Threads] alternar view (tree/cards/...)")),
+	NessClear:   key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("ctrl+l", "[Ness] limpar conversa")),
+	ViewToggle:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "[Threads] alternar view (tree/cards/...)")),
+	StatsMode:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "[Stats] alternar modo (overview/models/detailed)")),
+	StatsPeriod: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "[Stats] alternar período (all/7d/30d)")),
 }
 
 func keyMatches(msgKey string, b key.Binding) bool {
