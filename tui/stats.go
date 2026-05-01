@@ -345,7 +345,7 @@ func (v statsView) renderDetailed(width int) string {
 	}
 	b.WriteByte('\n')
 
-	// F2 — Padrões de retrabalho
+	// F2 — Padrões de retrabalho (texto-based, mede frustração)
 	rate, hits, totalMsgs := stats.ErrorRate(sessions)
 	rateStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
 	rateLabel := "saudável"
@@ -357,9 +357,14 @@ func (v statsView) renderDetailed(width int) string {
 		rateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
 		rateLabel = "moderado"
 	}
-	fmt.Fprintln(&b, header.Render("🔁 Sinais de retrabalho"))
-	fmt.Fprintf(&b, "%d msgs (%.0f%% de %d total) — %s\n\n",
-		hits, rate*100, totalMsgs, rateStyle.Render(rateLabel))
+	fmt.Fprintln(&b, header.Render("🔁 Sinais de retrabalho (palavras nas suas msgs)"))
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+	fmt.Fprintln(&b, muted.Render(
+		"  Conta msgs SUAS contendo: 'fix', 'bug', 'errado', 'não funciona',"))
+	fmt.Fprintln(&b, muted.Render(
+		"  'rollback', 'cancela', 'broken', etc. Mede iteração/frustração."))
+	fmt.Fprintf(&b, "  %d de %d msgs (%.0f%%) — %s\n\n",
+		hits, totalMsgs, rate*100, rateStyle.Render(rateLabel))
 
 	// F3 — Prefixos comuns
 	fmt.Fprintln(&b, header.Render("✏️ Como você inicia mensagens"))
@@ -403,16 +408,23 @@ func (v statsView) renderDetailed(width int) string {
 		fmt.Fprintf(&b, "%s %d\n", bar, p.v)
 	}
 
-	// 🔁 Repetições suspeitas — mesmo (tool, input) ≥3× em ≤60min.
-	// Janela larga porque dados retroativos incluem pausa humana.
+	// 🔂 Loops de tool — mesmo (tool, input) repetido ≥3× em ≤60min.
+	// Distinto de "🔁 Sinais de retrabalho" (texto-based, mede frustração)
+	// — aqui é tool-based, mede AGENTE preso em retry técnico.
 	if v.db != nil {
 		loops, err := v.db.DetectLoops(3, 3600)
-		if err == nil && len(loops) > 0 {
-			b.WriteByte('\n')
-			fmt.Fprintln(&b, header.Render("🔁 Repetições suspeitas (≥3× mesma input ≤60min)"))
+		muted := lipgloss.NewStyle().Foreground(colorMuted)
+		b.WriteByte('\n')
+		fmt.Fprintln(&b, header.Render("🔂 Loops de tool (chamada idêntica ≥3× em ≤60min)"))
+		fmt.Fprintln(&b, muted.Render(
+			"  Mede agente preso: mesma tool + mesmo input repetidos. Diferente"))
+		fmt.Fprintln(&b, muted.Render(
+			"  do '🔁 Sinais de retrabalho' acima (que mede via palavras como 'fix')."))
+		if err != nil || len(loops) == 0 {
+			fmt.Fprintln(&b, muted.Render("  (nenhum loop detectado)"))
+		} else {
 			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 			critStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-			muted := lipgloss.NewStyle().Foreground(colorMuted)
 			for i, h := range loops {
 				if i >= 8 {
 					break
@@ -427,7 +439,8 @@ func (v statsView) renderDetailed(width int) string {
 					lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-12s", h.ToolName)),
 					muted.Render(fmt.Sprintf("[%s]", h.SessionID[:8])),
 					muted.Render(when),
-					muted.Render(fmt.Sprintf("· span %s", fmtSecs(h.SpanSecs))))
+					muted.Render(fmt.Sprintf("· span %s · hash %s",
+						fmtSecs(h.SpanSecs), h.InputHash[:8])))
 			}
 		}
 	}
