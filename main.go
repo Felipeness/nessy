@@ -25,6 +25,7 @@ import (
 	"github.com/felipeness/nessy/internal/pricing"
 	"github.com/felipeness/nessy/internal/server"
 	"github.com/felipeness/nessy/internal/statusline"
+	"github.com/felipeness/nessy/internal/watch"
 	"github.com/felipeness/nessy/tui"
 )
 
@@ -54,6 +55,11 @@ MCP (Fase 8):
   nessy mcp                    sobe MCP server em stdio (chamado pelo Claude Code)
   nessy mcp-install [--force]  registra em ~/.claude/settings.json mcpServers
                   [--uninstall]
+
+DAEMON (Fase 9):
+  nessy daemon-install         instala launchd plist pra subir 'nessy serve' no login
+  nessy daemon-uninstall       remove launchd plist
+  nessy daemon-status          mostra estado do daemon
 
 EXAMPLES:
   nessy list
@@ -104,6 +110,12 @@ func main() {
 		cmdMCPServe()
 	case "mcp-install":
 		cmdMCPInstall(os.Args[2:])
+	case "daemon-install":
+		cmdDaemonInstall()
+	case "daemon-uninstall":
+		cmdDaemonUninstall()
+	case "daemon-status":
+		cmdDaemonStatus()
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -539,6 +551,13 @@ func cmdServe(args []string) {
 		}
 	}
 
+	// Watcher de background — detectores de loop em sessions ativas.
+	// Roda em goroutine; ctx é cancelado se o serve sair.
+	watcherCtx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	watcher := watch.New(filepath.Join(home, ".claude", "projects"), watch.Config{}, nil)
+	go watcher.Run(watcherCtx)
+
 	if err := server.Run(srv, listen, openBrowser); err != nil {
 		fatal(err)
 	}
@@ -816,5 +835,105 @@ func mockInput() *statusline.Input {
 			SevenDay: &statusline.RateLimitWindow{UsedPercentage: 18},
 		},
 		Worktree: &statusline.WorktreeInfo{Branch: "feat/CC-1234-statusline"},
+	}
+}
+
+// =============================================================================
+// Daemon — launchd integration pra macOS
+// =============================================================================
+
+const launchdLabel = "com.felipe-coelho.nessy"
+
+func launchdPlistPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
+}
+
+func renderPlist(binPath string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>` + launchdLabel + `</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + binPath + `</string>
+		<string>serve</string>
+		<string>--no-open</string>
+	</array>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+	<key>StandardOutPath</key><string>/tmp/nessy.log</string>
+	<key>StandardErrorPath</key><string>/tmp/nessy.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+	</dict>
+</dict>
+</plist>
+`
+}
+
+func cmdDaemonInstall() {
+	binPath, err := os.Executable()
+	if err != nil {
+		fatal(err)
+	}
+	plistPath := launchdPlistPath()
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0755); err != nil {
+		fatal(err)
+	}
+	if err := os.WriteFile(plistPath, []byte(renderPlist(binPath)), 0644); err != nil {
+		fatal(err)
+	}
+	// Carrega no launchd. Tolera "already loaded" — re-carrega via unload+load.
+	_ = exec.Command("launchctl", "unload", plistPath).Run()
+	if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "launchctl load: %v\n%s\n", err, out)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ daemon instalado: %s\n", plistPath)
+	fmt.Println("  binário:", binPath)
+	fmt.Println("  logs:    /tmp/nessy.log /tmp/nessy.err")
+	fmt.Println("  Web UI:  http://localhost:5555")
+	fmt.Println()
+	fmt.Println("Reinicia agora:")
+	fmt.Println("  launchctl kickstart -k gui/$UID/" + launchdLabel)
+}
+
+func cmdDaemonUninstall() {
+	plistPath := launchdPlistPath()
+	if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("daemon não está instalado")
+		return
+	}
+	_ = exec.Command("launchctl", "unload", plistPath).Run()
+	if err := os.Remove(plistPath); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("✓ daemon removido: %s\n", plistPath)
+}
+
+func cmdDaemonStatus() {
+	plistPath := launchdPlistPath()
+	if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("daemon: NÃO INSTALADO")
+		fmt.Println("  rode: nessy daemon-install")
+		return
+	}
+	out, _ := exec.Command("launchctl", "list", launchdLabel).CombinedOutput()
+	fmt.Printf("plist: %s\n\n", plistPath)
+	fmt.Print(string(out))
+	// Bate na porta pra ver se tá saudável
+	resp, err := http.Get("http://127.0.0.1:5555/health")
+	if err != nil {
+		fmt.Println("\nhealth: SEM RESPOSTA (daemon pode não estar pronto)")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 {
+		fmt.Println("\nhealth: OK (http://127.0.0.1:5555)")
+	} else {
+		fmt.Printf("\nhealth: status %d\n", resp.StatusCode)
 	}
 }
