@@ -26,49 +26,78 @@ import (
 func registerTools(s *mcp.Server) {
 	s.Register(mcp.Tool{
 		Name: "claude_history_similar",
-		Description: "Find past Claude Code sessions similar to a query, ranked by " +
-			"semantic similarity. USE WHEN: the user mentions 'doing similar work before', " +
-			"asks 'how did I solve X last time', or starts a task that resembles past work. " +
-			"Returns top-N session_ids with summary, project_dir, branch, similarity score.",
+		Description: "Find past Claude Code sessions semantically similar to a query, " +
+			"ranked by embedding cosine similarity. Returns top-N (default 5) with " +
+			"session_id, summary (1-line), project_dir, branch, and similarity score 0-1.\n\n" +
+			"USE WHEN: user says 'I did something like this before', 'how did I solve X', " +
+			"'find that session where I…', or you're starting a task that may resemble past work. " +
+			"Useful pre-flight check before big refactors or debugging.\n\n" +
+			"EXAMPLE: query='migrate sqlite to postgres' → returns 5 sessions about DB migrations " +
+			"with scores 0.7-0.9.\n\n" +
+			"DO NOT USE for: keyword/literal search (use claude_history_search instead), or " +
+			"questions needing synthesis across sessions (use claude_history_ask). Returns " +
+			"empty if AI features disabled (no embeddings indexed).",
 		InputSchema: schemaObject(map[string]any{
-			"query": schemaString("Description of the task or topic to find similar past work."),
-			"n":     schemaInt("Max results", 5),
+			"query": schemaString("Natural-language description of the task or topic. Sentences work better than keywords."),
+			"n":     schemaInt("Max results (1-20)", 5),
 		}, "query"),
 	}, handleSimilar)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_search",
-		Description: "Search the user's Claude Code history. USE WHEN: looking for sessions " +
-			"with specific keywords (path, branch, message content, tool names). Modes: " +
-			"'hybrid' (default) combines metadata + full-text; 'body' only message content " +
-			"via FTS5; 'meta' only path/branch/msg; 'sim' semantic via embeddings.",
+		Description: "Keyword/filter search over Claude Code session metadata + message bodies. " +
+			"Returns sessions matching the query with first_msg, project, branch, model, cost, " +
+			"start_time. Supports filters inline: 'project:claude-history', 'branch:feat/CC-1234', " +
+			"'since:7d', 'cost:>1', 'msgs:>100'.\n\n" +
+			"MODES: 'hybrid' (default, metadata+FTS5), 'body' (only message text via FTS5), " +
+			"'meta' (only project/branch/first_msg fields), 'sim' (semantic via embeddings — " +
+			"prefer claude_history_similar for that).\n\n" +
+			"USE WHEN: user has specific keywords/filters in mind ('find sessions on the auth " +
+			"refactor branch from last week with cost > $5'). Faster and more precise than " +
+			"semantic for literal terms.\n\n" +
+			"DO NOT USE for: vague conceptual queries (use claude_history_similar), or for " +
+			"questions needing answers/synthesis (use claude_history_ask).",
 		InputSchema: schemaObject(map[string]any{
-			"query": schemaString("Search query — supports filters like 'project:X branch:Y since:7d cost:>1'."),
-			"mode":  schemaStringEnum("Search mode", []string{"hybrid", "body", "meta", "sim"}, "hybrid"),
+			"query": schemaString("Keywords + optional inline filters: 'project:X branch:Y since:7d cost:>1 msgs:>100'."),
+			"mode":  schemaStringEnum("Search mode (default 'hybrid')", []string{"hybrid", "body", "meta", "sim"}, "hybrid"),
 		}, "query"),
 	}, handleSearchTool)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_ask",
-		Description: "Ask 'Ness IA' — the user's second brain — any question about their " +
-			"development history. Uses RAG over all sessions with extracted knowledge. " +
-			"USE WHEN: user asks how they solved something before, what decisions they " +
-			"made, what patterns they use, or what's still unfinished. Returns answer " +
-			"citing session_ids in [brackets] from the user's actual history; falls back " +
-			"to general knowledge marked [geral] only when history doesn't cover.",
+		Description: "RAG-powered Q&A over the user's entire Claude Code history. Uses " +
+			"extracted knowledge (decisions, learnings, code patterns) + embeddings to " +
+			"answer in natural language with [session_id] citations.\n\n" +
+			"USE WHEN: user wants a SYNTHESIZED answer rather than a list. Examples: " +
+			"'how did I solve the auth bug?', 'what databases have I used?', 'what's still " +
+			"unfinished in the migration project?', 'what decisions did I make about caching?'.\n\n" +
+			"Returns prose answer with [abc12345] markers linking to actual sessions. Falls " +
+			"back to general knowledge with [geral] tag only when history is silent on the topic.\n\n" +
+			"DO NOT USE for: just listing/finding sessions (use search/similar — they're " +
+			"faster and don't run the LLM). Returns empty if AI features disabled.",
 		InputSchema: schemaObject(map[string]any{
-			"question": schemaString("Question about the user's coding history."),
+			"question": schemaString("Natural-language question about your coding history. Phrasing as a question helps."),
 		}, "question"),
 	}, handleAskTool)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_insights",
-		Description: "List automated insights about the user's coding patterns: repeated " +
-			"tasks, chronic problems, script opportunities, token waste, anti-patterns, " +
-			"personal patterns. USE WHEN: user wants to understand their own workflow, " +
-			"asks 'what should I improve', or wants automation suggestions.",
+		Description: "Surface AI-generated insights about the user's coding patterns. Each " +
+			"insight has type, title, description, evidence (session_ids), and suggested action.\n\n" +
+			"INSIGHT TYPES:\n" +
+			"  repeated_task     — task done 3+× across sessions (script candidate)\n" +
+			"  chronic_problem   — same bug/issue keeps coming back\n" +
+			"  script_opportunity— manual workflow that should be automated\n" +
+			"  token_waste       — sessions burning tokens with low output\n" +
+			"  performance_hint  — slow loops or inefficient patterns\n" +
+			"  anti_pattern      — code smell repeated across sessions\n" +
+			"  personal_pattern  — workflow quirks specific to this user\n\n" +
+			"USE WHEN: user asks 'what should I improve', 'what am I doing wrong', 'what " +
+			"could be automated', or wants a workflow review. Without 'type' filter returns all.\n\n" +
+			"DO NOT USE for: looking up specific sessions (use search). Returns empty if " +
+			"insights haven't been generated yet (run TUI's [I] action first).",
 		InputSchema: schemaObject(map[string]any{
-			"type": schemaStringEnum("Filter by insight type",
+			"type": schemaStringEnum("Filter by insight type (omit for all)",
 				[]string{"repeated_task", "chronic_problem", "script_opportunity",
 					"token_waste", "performance_hint", "anti_pattern", "personal_pattern"}, ""),
 		}),
@@ -76,45 +105,75 @@ func registerTools(s *mcp.Server) {
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_knowledge",
-		Description: "Get the extracted 'knowledge' from a specific session: problem, " +
-			"solution, decisions with rationale, learnings, code patterns, tech used, " +
-			"open questions. USE WHEN: drilling into a specific session referenced by " +
-			"session_id (8-char prefix or full UUID).",
+		Description: "Get the AI-extracted structured knowledge from ONE specific session. " +
+			"Returns: problem statement, solution, decisions (each with rationale), learnings " +
+			"(takeaways), code_patterns (reusable techniques), tech_used (libs/tools), " +
+			"open_questions (loose ends).\n\n" +
+			"USE WHEN: drilling into a session you already know the ID of, often after using " +
+			"claude_history_search or claude_history_similar to find candidates. Examples: " +
+			"'tell me what I learned in [abc12345]', 'what decisions were made in that " +
+			"session about caching?'.\n\n" +
+			"EXAMPLE: session_id='abc12345' → returns JSON with all 7 fields.\n\n" +
+			"DO NOT USE for: cross-session aggregates (use claude_history_aggregated), or " +
+			"when you don't have a session_id yet. Returns empty if knowledge not extracted " +
+			"for this session (run TUI's [K] action first).",
 		InputSchema: schemaObject(map[string]any{
-			"session_id": schemaString("Session ID, full UUID or 8-char prefix."),
+			"session_id": schemaString("Session ID — full UUID (36 chars) or 8-char prefix accepted."),
 		}, "session_id"),
 	}, handleKnowledgeTool)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_aggregated",
-		Description: "Cross-session knowledge aggregate: top code patterns, decision " +
-			"timeline, recurring problems, tech frequency, open questions across all " +
-			"sessions. USE WHEN: user wants overview of their work patterns, recurring " +
-			"problems they keep hitting, or what's still in their backlog.",
+		Description: "Cross-session aggregate of all extracted knowledge. Returns: top " +
+			"code_patterns (with frequency), decision_timeline (chronological), recurring " +
+			"problems (count + last_seen), tech frequency map, open_questions across all " +
+			"sessions.\n\n" +
+			"USE WHEN: user wants the BIG PICTURE — 'what patterns do I use most', 'what " +
+			"are my open loose ends across all projects', 'what recurring problems keep " +
+			"coming up', 'show me my decision history'. Read-only summary, no per-session drill.\n\n" +
+			"No input parameters — operates on the entire history.\n\n" +
+			"DO NOT USE for: questions about a single session (use claude_history_knowledge), " +
+			"or when looking for specific text/keywords (use claude_history_search). Returns " +
+			"empty arrays if no sessions have extracted knowledge yet.",
 		InputSchema: schemaObject(nil),
 	}, handleAggregatedTool)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_project",
-		Description: "Get stats for a specific project directory: total sessions, total " +
-			"cost, p90 cost/tokens, detected tech stack, top tools used, most-recent " +
-			"ticket pattern. USE WHEN: about to start work on a project, want to " +
-			"understand its history before refactoring, or estimate effort.",
+		Description: "Profile a single project directory across all sessions that ran in " +
+			"it. Returns: session count, total cost, p90 cost/tokens (catch outliers), " +
+			"detected tech stack (langs/frameworks), top tools used (Bash/Edit/Read freq), " +
+			"most-recent ticket pattern (CC-1234 from branch names).\n\n" +
+			"USE WHEN: about to start work on a project ('what have I done in /path/to/repo " +
+			"before?'), planning a refactor and want history context, estimating effort " +
+			"based on similar past work, or onboarding to an unfamiliar local project.\n\n" +
+			"EXAMPLE: path='/Users/me/work/auth-service' → returns 23 sessions, $45 total, " +
+			"p90=$3.20, tech=[Go, NestJS, Postgres], top tools=[Edit:120, Bash:80].\n\n" +
+			"DO NOT USE for: searching across projects (use claude_history_search). Path " +
+			"must be absolute and match the cwd recorded in sessions exactly.",
 		InputSchema: schemaObject(map[string]any{
-			"path": schemaString("Absolute path to the project directory."),
+			"path": schemaString("Absolute project path — must match session cwd exactly (e.g. /Users/me/repo, not ~/repo)."),
 		}, "path"),
 	}, handleProjectTool)
 
 	s.Register(mcp.Tool{
 		Name: "claude_history_standup",
-		Description: "Generate a standup-style markdown summary of recent work. Three " +
-			"formats: 'editorial' (default — Concluído/Decisões/Em aberto sections using " +
-			"extracted knowledge), 'timeline' (chronological by day/hour), 'project' " +
-			"(grouped by project_dir with cost). USE WHEN: user asks 'what did I do " +
-			"last week', preparing for daily/weekly standups.",
+		Description: "Generate a standup-style markdown summary of recent Claude Code work. " +
+			"Pre-formatted for daily/weekly reports.\n\n" +
+			"FORMATS:\n" +
+			"  editorial (default) — narrative with sections: Concluído / Decisões / Em aberto\n" +
+			"  timeline            — chronological by day/hour\n" +
+			"  project             — grouped by project_dir with cost subtotals\n\n" +
+			"USE WHEN: user asks 'what did I do last week', 'summary for daily standup', " +
+			"'prepare my weekly report', or wants to copy-paste into Slack/Jira. The " +
+			"editorial format is best for human reading; timeline is best for activity " +
+			"reconstruction; project is best when reporting per-client.\n\n" +
+			"EXAMPLE: since='7d', format='editorial' → markdown with last-week summary.\n\n" +
+			"DO NOT USE for: questions about specific sessions (use claude_history_ask) or " +
+			"raw lists (use claude_history_search). Default since='24h' if omitted.",
 		InputSchema: schemaObject(map[string]any{
-			"since":  schemaString("Time window: '7d', '24h', '30m'."),
-			"format": schemaStringEnum("Output format", []string{"editorial", "timeline", "project"}, "editorial"),
+			"since":  schemaString("Time window like '7d', '24h', '30m', '14d'. Default '24h'."),
+			"format": schemaStringEnum("Output format (default 'editorial')", []string{"editorial", "timeline", "project"}, "editorial"),
 		}),
 	}, handleStandupTool)
 }
