@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -523,10 +524,12 @@ func cmdServe(args []string) {
 
 	hub := server.NewHub()
 	srv := &server.Server{
-		DB:      db,
-		Pricing: p,
-		Hub:     hub,
-		Static:  staticHandler(),
+		DB:         db,
+		Pricing:    p,
+		Hub:        hub,
+		Static:     staticHandler(),
+		Config:     cfg,
+		ConfigPath: filepath.Join(cacheDir, "config.toml"),
 	}
 
 	if cfg.AI.Enabled {
@@ -556,10 +559,22 @@ func cmdServe(args []string) {
 	}
 
 	// Watcher de background — detectores de loop em sessions ativas.
-	// Roda em goroutine; ctx é cancelado se o serve sair.
+	// Config carrega de config.toml [notify] section.
 	watcherCtx, cancelWatch := context.WithCancel(context.Background())
 	defer cancelWatch()
-	watcher := watch.New(filepath.Join(home, ".claude", "projects"), watch.Config{}, nil)
+	watcher := watch.New(
+		filepath.Join(home, ".claude", "projects"),
+		watch.Config{
+			Enabled:            cfg.Notify.Enabled,
+			PollInterval:       time.Duration(cfg.Notify.PollSecs) * time.Second,
+			LoopWindowSecs:     float64(cfg.Notify.WindowSecs),
+			LoopMinCount:       cfg.Notify.MinCount,
+			NotifyDebounceSecs: float64(cfg.Notify.DebounceSecs),
+			IncludeTools:       cfg.Notify.IncludeTools,
+			ExcludeTools:       cfg.Notify.ExcludeTools,
+		},
+		nil,
+	)
 	go watcher.Run(watcherCtx)
 
 	if err := server.Run(srv, listen, openBrowser); err != nil {

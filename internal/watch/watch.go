@@ -29,6 +29,9 @@ import (
 
 // Config controla os detectores. Zero = defaults razoáveis.
 type Config struct {
+	// Enabled master switch — false desliga notification mas ainda detecta
+	// pra logging.
+	Enabled bool
 	// PollInterval é o intervalo entre scans. Default 10s.
 	PollInterval time.Duration
 	// LoopWindowSecs: tool repetido em ≤N segundos = loop. Default 60.
@@ -37,6 +40,12 @@ type Config struct {
 	LoopMinCount int
 	// NotifyDebounceSecs: mesma alertKey não repete em ≤N segundos. Default 30.
 	NotifyDebounceSecs float64
+	// IncludeTools: se non-empty, só dispara em tools dessa lista (whitelist).
+	// Default: todos os tools (slice vazia).
+	IncludeTools []string
+	// ExcludeTools: blacklist (ignorada se IncludeTools tem item).
+	// Default: vazio (sem exclusões).
+	ExcludeTools []string
 }
 
 func (c *Config) defaults() {
@@ -52,6 +61,24 @@ func (c *Config) defaults() {
 	if c.NotifyDebounceSecs == 0 {
 		c.NotifyDebounceSecs = 30
 	}
+}
+
+// allowsTool aplica IncludeTools/ExcludeTools.
+func (c *Config) allowsTool(name string) bool {
+	if len(c.IncludeTools) > 0 {
+		for _, t := range c.IncludeTools {
+			if t == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, t := range c.ExcludeTools {
+		if t == name {
+			return false
+		}
+	}
+	return true
 }
 
 // Watcher coordena os detectores e gerencia debounce de notifications.
@@ -179,6 +206,9 @@ func (w *Watcher) processFile(path string) {
 			if b.Type != "tool_use" || b.Name == "" {
 				continue
 			}
+			if !w.cfg.allowsTool(b.Name) {
+				continue
+			}
 			w.observeTool(path, t, b.Name, hashInput(b.Input))
 		}
 	}
@@ -211,7 +241,7 @@ func (w *Watcher) observeTool(sessionFile string, ts time.Time, name, hash strin
 }
 
 // notifyLoop emite notificação nativa (cross-platform via sysutil),
-// com debounce por alertKey.
+// com debounce por alertKey. Sempre loga, mas só notifica se Enabled.
 func (w *Watcher) notifyLoop(sessionFile, toolName string, count int) {
 	alertKey := "loop:" + filepath.Base(sessionFile) + ":" + toolName
 	if !w.shouldNotify(alertKey) {
@@ -221,9 +251,12 @@ func (w *Watcher) notifyLoop(sessionFile, toolName string, count int) {
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
+	w.logger.Printf("LOOP %s × %d in %s", toolName, count, sid)
+	if !w.cfg.Enabled {
+		return // log but don't surface
+	}
 	title := "Nessy: loop detectado"
 	body := fmt.Sprintf("%s repetido %d× em [%s]. Vale revisar.", toolName, count, sid)
-	w.logger.Printf("LOOP %s × %d in %s", toolName, count, sid)
 	if err := sysutil.Notify(title, body); err != nil {
 		w.logger.Printf("notify failed: %v", err)
 	}

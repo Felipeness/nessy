@@ -1,4 +1,6 @@
 import type {
+  AdviseResponse,
+  NessyConfig,
   AIHealth,
   AISummary,
   Behavioral,
@@ -55,6 +57,17 @@ export const api = {
     get<Message[]>(`/api/sessions/${id}/messages?n=${n}`),
   stats: () => get<Stats>('/api/stats'),
   meta: () => get<MetaResponse>('/api/meta'),
+  advise: () => get<AdviseResponse>('/api/advise'),
+  getConfig: () => get<NessyConfig>('/api/config'),
+  saveConfig: async (cfg: NessyConfig) => {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    })
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+    return await res.json()
+  },
   behavioral: () => get<Behavioral>('/api/stats/behavioral'),
   behaviorAdvanced: () => get<BehaviorAdvanced>('/api/behavior/advanced'),
   costs: () => get<Costs>('/api/costs'),

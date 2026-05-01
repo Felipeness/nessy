@@ -20,6 +20,46 @@ export type Session = {
   cache_creation_tokens: number
   cache_read_tokens: number
   tool_calls: Record<string, number>
+  // Phase 12.S.1
+  sidechain_turns?: number
+  sidechain_agents?: number
+  // Phase 12.A.5
+  resolved_at_turn?: number
+}
+
+// Phase 12.A.4 — advisor recommendations
+export type Recommendation = {
+  type: 'skill' | 'hook' | 'cli' | 'model_downgrade' | 'cache' | 'subagent' | 'claude_md'
+  title: string
+  description: string
+  evidence: string
+  action: string
+  savings: string
+  confidence: 'high' | 'medium' | 'low'
+  score: number
+}
+
+export type AdviseResponse = {
+  recommendations: Recommendation[] | null
+  count: number
+}
+
+// Phase 12.W — config (espelha internal/config.Config seção Notify)
+export type NotifyConfig = {
+  enabled: boolean
+  min_count: number
+  window_secs: number
+  debounce_secs: number
+  poll_secs: number
+  include_tools?: string[]
+  exclude_tools?: string[]
+}
+
+export type NessyConfig = {
+  cost?: { warn_per_day_usd?: number; alert_per_day_usd?: number }
+  ui?: { default_tab?: string }
+  ai?: { enabled?: boolean; ollama_url?: string }
+  notify: NotifyConfig
 }
 
 export type Cost = {
@@ -145,6 +185,7 @@ export type TabName =
   | 'studio'
   | 'ness'
   | 'meta'
+  | 'advise'
 
 // Meta tab — análise cross-session (file reuse, cost por ticket, convergence)
 export type FileReuse = {

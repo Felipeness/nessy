@@ -14,6 +14,7 @@ import (
 
 	"github.com/felipeness/nessy/internal/advisor"
 	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/config"
 	"github.com/felipeness/nessy/internal/index"
 	"github.com/felipeness/nessy/internal/model"
 	"github.com/felipeness/nessy/internal/parser"
@@ -25,6 +26,7 @@ import (
 func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/meta", s.handleMeta)
 	mux.HandleFunc("/api/advise", s.handleAdvise)
+	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionByID) // /api/sessions/<id> + /api/sessions/<id>/messages
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -796,6 +798,35 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, resp)
+}
+
+// handleConfig: GET retorna config atual; POST sobrescreve.
+// Body do POST espelha o struct Config (apenas seção [notify] mexível por agora).
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeJSON(w, 200, s.Config)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeErr(w, 405, "GET or POST only")
+		return
+	}
+	var body config.Config
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	// Só aceita atualização da seção Notify por enquanto — outras seções
+	// exigem reload do servidor (Cost, AI) e merecem flow próprio.
+	s.Config.Notify = body.Notify
+	if err := config.SaveConfig(s.ConfigPath, s.Config); err != nil {
+		writeErr(w, 500, "save: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"saved": true,
+		"note":  "Config persistida. Reinicie o daemon (nessy serve) pra aplicar.",
+	})
 }
 
 // handleAdvise devolve recomendações deterministas do advisor.

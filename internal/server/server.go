@@ -12,6 +12,7 @@ import (
 
 	"github.com/felipeness/nessy/internal/ai"
 	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/config"
 	"github.com/felipeness/nessy/internal/pricing"
 )
 
@@ -26,6 +27,9 @@ type Server struct {
 	AIClient  *ai.Client
 	AIWorker  *ai.Worker
 	GenModel  string
+
+	Config     *config.Config
+	ConfigPath string
 }
 
 // Run inicializa o HTTP server, registra rotas e bloqueia até erro/sigterm.
