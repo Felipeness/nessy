@@ -374,12 +374,13 @@ func (v statsView) renderDetailed(width int) string {
 		fmt.Fprintf(&b, "%s %d\n", bar, p.v)
 	}
 
-	// 🔁 Loops detectados — mesmo (tool, input) repetido ≥3× em ≤5min
+	// 🔁 Repetições suspeitas — mesmo (tool, input) ≥3× em ≤30min.
+	// Janela larga porque dados retroativos incluem pausa humana.
 	if v.db != nil {
-		loops, err := v.db.DetectLoops(3, 300)
+		loops, err := v.db.DetectLoops(3, 1800)
 		if err == nil && len(loops) > 0 {
 			b.WriteByte('\n')
-			fmt.Fprintln(&b, header.Render("🔁 Loops detectados (≥3× mesma input ≤5min)"))
+			fmt.Fprintln(&b, header.Render("🔁 Repetições suspeitas (≥3× mesma input ≤30min)"))
 			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 			critStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 			muted := lipgloss.NewStyle().Foreground(colorMuted)
