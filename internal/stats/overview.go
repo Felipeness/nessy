@@ -56,7 +56,7 @@ func BuildOverview(sessions []*model.Session, p *pricing.Pricing) OverviewMetric
 				ov.TotalCostUSD += c.USD
 			}
 		}
-		if s.Model != "" {
+		if s.Model != "" && s.Model != "<synthetic>" {
 			ov.ModelCounts[s.Model]++
 		}
 		if d := s.Duration(); d > ov.LongestSession {

@@ -56,10 +56,22 @@ type statsView struct {
 	showLocal bool
 	mode      statsMode
 	period    statsPeriod
+
+	// Caches por (mode, period, width). Evita re-render a cada keystroke.
+	cache map[string]string
 }
 
 func newStatsView(sessions []*model.Session, p *pricing.Pricing) statsView {
-	return statsView{sessions: sessions, pricing: p, mode: statsModeOverview, period: periodAll}
+	return statsView{
+		sessions: sessions, pricing: p,
+		mode: statsModeOverview, period: periodAll,
+		cache: map[string]string{},
+	}
+}
+
+// invalidate limpa o cache (chame quando sessions mudam ou flag relevante muda).
+func (v *statsView) invalidate() {
+	v.cache = map[string]string{}
 }
 
 // ToggleMode cicla overview → models → detailed → overview.
@@ -70,6 +82,7 @@ func (v *statsView) ToggleMode() {
 // TogglePeriod cicla all → 7d → 30d → all.
 func (v *statsView) TogglePeriod() {
 	v.period = (v.period + 1) % 3
+	v.invalidate()
 }
 
 // filteredSessions aplica o filtro de período ao slice. Retorna slice filtrado
@@ -90,18 +103,24 @@ func (v statsView) filteredSessions() []*model.Session {
 }
 
 // renderGlobal é o dispatcher: header com modos + filtro + corpo do modo selecionado.
+// Body tem cache por (mode, period, width) — header sempre rerenderiza pra
+// refletir destaque das sub-tabs/período.
 func (v statsView) renderGlobal(width int) string {
-	var out strings.Builder
-	out.WriteString(v.renderModeHeader(width) + "\n")
-	switch v.mode {
-	case statsModeOverview:
-		out.WriteString(v.renderOverview(width))
-	case statsModeModels:
-		out.WriteString(v.renderModels(width))
-	default:
-		out.WriteString(v.renderDetailed(width))
+	header := v.renderModeHeader(width) + "\n"
+	cacheKey := fmt.Sprintf("%d:%d:%d", v.mode, v.period, width)
+	body, ok := v.cache[cacheKey]
+	if !ok {
+		switch v.mode {
+		case statsModeOverview:
+			body = v.renderOverview(width)
+		case statsModeModels:
+			body = v.renderModels(width)
+		default:
+			body = v.renderDetailed(width)
+		}
+		v.cache[cacheKey] = body
 	}
-	return out.String()
+	return header + body
 }
 
 // renderModeHeader desenha sub-tabs Overview/Models/Detailed e filtro de período.
@@ -517,12 +536,24 @@ func (v statsView) renderModels(width int) string {
 	daySeen := map[string]bool{}
 	modelSet := map[string]bool{}
 
+	// Agrega tokens por modelo pra filtrar os com 0 antes de iterar dias
+	modelTotal := map[string]int64{}
 	for _, s := range sessions {
-		k := s.StartTime.Local().Format("2006-01-02")
 		m := s.Model
-		if m == "" {
-			m = "(unknown)"
+		if m == "" || m == "<synthetic>" {
+			continue // skip placeholders
 		}
+		modelTotal[m] += s.TotalTokens()
+	}
+	for _, s := range sessions {
+		m := s.Model
+		if m == "" || m == "<synthetic>" {
+			continue
+		}
+		if modelTotal[m] == 0 {
+			continue
+		}
+		k := s.StartTime.Local().Format("2006-01-02")
 		tokens[dayKey{k, m}] += s.TotalTokens()
 		modelSet[m] = true
 		if !daySeen[k] {
@@ -532,7 +563,8 @@ func (v statsView) renderModels(width int) string {
 	}
 	sort.Strings(dayList)
 	if len(dayList) == 0 {
-		return ""
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"(sem tokens registrados)")
 	}
 	// Limita a 30 dias mais recentes pra caber no chart
 	if len(dayList) > 30 {
@@ -620,6 +652,7 @@ func (v statsView) renderModels(width int) string {
 	b.WriteString("\n\n")
 
 	// Breakdown por modelo: tokens in/out + percentual
+	// Pula placeholders ("" e "<synthetic>") — não fazem sentido no breakdown
 	var totalAll int64
 	perModel := map[string]struct {
 		in, out, total int64
@@ -627,8 +660,8 @@ func (v statsView) renderModels(width int) string {
 	}{}
 	for _, s := range sessions {
 		m := s.Model
-		if m == "" {
-			m = "(unknown)"
+		if m == "" || m == "<synthetic>" {
+			continue
 		}
 		x := perModel[m]
 		x.in += s.InputTokens + s.CacheCreationTokens + s.CacheReadTokens
@@ -638,7 +671,8 @@ func (v statsView) renderModels(width int) string {
 		perModel[m] = x
 		totalAll += s.TotalTokens()
 	}
-	// Sort por total desc
+	// Sort por total desc, com tiebreaker por nome (deterministic — sem flicker
+	// entre modelos zerados como "<synthetic>" e "(unknown)").
 	type modelStat struct {
 		m              string
 		in, out, total int64
@@ -646,10 +680,17 @@ func (v statsView) renderModels(width int) string {
 	}
 	var stats2 []modelStat
 	for m, x := range perModel {
+		// Filtra modelos com 0 tokens — são placeholders que poluem
+		if x.total == 0 {
+			continue
+		}
 		stats2 = append(stats2, modelStat{m, x.in, x.out, x.total, x.sessions})
 	}
 	sort.Slice(stats2, func(i, j int) bool {
-		return stats2[i].total > stats2[j].total
+		if stats2[i].total != stats2[j].total {
+			return stats2[i].total > stats2[j].total
+		}
+		return stats2[i].m < stats2[j].m
 	})
 
 	// 2 colunas se couber
