@@ -379,10 +379,11 @@ func countToolUses(raw json.RawMessage, into map[string]int) {
 // ToolEvent é um único tool_use individual, com timestamp e hash do input.
 // Usado pra loop detection retroativa.
 type ToolEvent struct {
-	SessionID string
-	Timestamp time.Time
-	ToolName  string
-	InputHash string // SHA-256 do input JSON canonicalizado
+	SessionID    string
+	Timestamp    time.Time
+	ToolName     string
+	InputHash    string // SHA-256 do input JSON canonicalizado
+	InputPreview string // primeiros ~100 chars do input flatten — pra UI
 }
 
 // ParseToolEvents lê o JSONL e devolve um event por tool_use encontrado.
@@ -422,14 +423,31 @@ func ParseToolEvents(path string) ([]ToolEvent, error) {
 				continue
 			}
 			out = append(out, ToolEvent{
-				SessionID: ev.SessionID,
-				Timestamp: t,
-				ToolName:  b.Name,
-				InputHash: hashToolInput(b.Input),
+				SessionID:    ev.SessionID,
+				Timestamp:    t,
+				ToolName:     b.Name,
+				InputHash:    hashToolInput(b.Input),
+				InputPreview: previewInput(b.Input),
 			})
 		}
 	}
 	return out, scanner.Err()
+}
+
+// previewInput devolve uma versão truncada do input pra UI debug.
+// Usa flattenJSON pra extrair só strings (sem chaves técnicas) e trunca
+// em 100 chars. Single-line.
+func previewInput(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	flat := flattenJSON(raw)
+	flat = strings.ReplaceAll(flat, "\n", " ")
+	flat = strings.Join(strings.Fields(flat), " ")
+	if len(flat) > 100 {
+		return flat[:99] + "…"
+	}
+	return flat
 }
 
 // hashToolInput devolve SHA-256 do input JSON canonicalizado (chaves sorted

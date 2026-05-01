@@ -51,11 +51,13 @@ CREATE TABLE IF NOT EXISTS tool_uses (
 -- tool_events: 1 row por tool_use individual (não agregado). Habilita
 -- loop detection retroativa: GROUP BY (session_id, tool_name, input_hash)
 -- HAVING count >= N AND maxts - mints < window_ns.
+-- input_preview: primeiros ~100 chars do input pra UI debug.
 CREATE TABLE IF NOT EXISTS tool_events (
 	session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
 	ts INTEGER NOT NULL,
 	tool_name TEXT NOT NULL,
-	input_hash TEXT NOT NULL
+	input_hash TEXT NOT NULL,
+	input_preview TEXT NOT NULL DEFAULT ''
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_tool_events_loop
 	ON tool_events(session_id, tool_name, input_hash, ts);
@@ -220,6 +222,10 @@ func runMigrations(conn *sql.DB) error {
 		"sidechain_agents INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := addColIfMissing("tool_events", "input_preview",
+		"input_preview TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -302,13 +308,13 @@ func (db *DB) IndexToolEvents(sessionID string, events []parser.ToolEvent) error
 		return fmt.Errorf("clear tool_events: %w", err)
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO tool_events (session_id, ts, tool_name, input_hash) VALUES (?,?,?,?)`)
+		`INSERT INTO tool_events (session_id, ts, tool_name, input_hash, input_preview) VALUES (?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range events {
-		if _, err := stmt.Exec(sessionID, e.Timestamp.UnixNano(), e.ToolName, e.InputHash); err != nil {
+		if _, err := stmt.Exec(sessionID, e.Timestamp.UnixNano(), e.ToolName, e.InputHash, e.InputPreview); err != nil {
 			return fmt.Errorf("insert tool_event: %w", err)
 		}
 	}
@@ -317,12 +323,13 @@ func (db *DB) IndexToolEvents(sessionID string, events []parser.ToolEvent) error
 
 // LoopHit representa um padrão de tool repetido suspeito.
 type LoopHit struct {
-	SessionID string
-	ToolName  string
-	InputHash string
-	Count     int
-	SpanSecs  float64 // tempo entre primeiro e último (segundos)
-	FirstAt   time.Time
+	SessionID    string
+	ToolName     string
+	InputHash    string
+	InputPreview string // amostra do input pra UI
+	Count        int
+	SpanSecs     float64 // tempo entre primeiro e último (segundos)
+	FirstAt      time.Time
 }
 
 // DetectLoops devolve padrões `count >= minCount` de mesmo (tool, input_hash)
@@ -340,8 +347,11 @@ func (db *DB) DetectLoops(minCount int, windowSecs float64) ([]LoopHit, error) {
 		windowSecs = 300
 	}
 	windowNs := int64(windowSecs * 1e9)
+	// Pega max(input_preview) — qualquer linha do grupo serve, todas têm
+	// mesmo hash logo mesmo preview (assumindo hash determinístico).
 	rows, err := db.conn.Query(`
 		SELECT session_id, tool_name, input_hash,
+		       MAX(input_preview) AS preview,
 		       COUNT(*) AS cnt,
 		       MIN(ts) AS first_ts,
 		       MAX(ts) - MIN(ts) AS span_ns
@@ -359,7 +369,7 @@ func (db *DB) DetectLoops(minCount int, windowSecs float64) ([]LoopHit, error) {
 	for rows.Next() {
 		var h LoopHit
 		var firstTs, spanNs int64
-		if err := rows.Scan(&h.SessionID, &h.ToolName, &h.InputHash, &h.Count, &firstTs, &spanNs); err != nil {
+		if err := rows.Scan(&h.SessionID, &h.ToolName, &h.InputHash, &h.InputPreview, &h.Count, &firstTs, &spanNs); err != nil {
 			return nil, err
 		}
 		h.FirstAt = time.Unix(0, firstTs)

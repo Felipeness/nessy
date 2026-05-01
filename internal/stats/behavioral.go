@@ -107,6 +107,51 @@ func ErrorRate(sessions []*model.Session) (rate float64, hits, total int) {
 	return
 }
 
+// PatternHit representa um padrão de retrabalho com sua contagem.
+type PatternHit struct {
+	Pattern string
+	Count   int
+}
+
+// ErrorRateBreakdown devolve quais padrões foram detectados e quantas vezes.
+// Util pra mostrar ao usuário "o que" tá causando o retrabalho — não só
+// "quanto". Patterns são contados independentemente: uma msg com "fix" e
+// "broken" conta pros dois.
+func ErrorRateBreakdown(sessions []*model.Session) []PatternHit {
+	counts := map[string]int{}
+	for _, s := range sessions {
+		if s.JSONLPath == "" {
+			continue
+		}
+		msgs, err := parser.ParseMessages(s.JSONLPath)
+		if err != nil {
+			continue
+		}
+		for _, m := range msgs {
+			if m.Role != "user" {
+				continue
+			}
+			low := strings.ToLower(m.Content)
+			for _, p := range errorPatterns {
+				if strings.Contains(low, p) {
+					counts[p]++
+				}
+			}
+		}
+	}
+	out := make([]PatternHit, 0, len(counts))
+	for p, c := range counts {
+		out = append(out, PatternHit{Pattern: p, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Pattern < out[j].Pattern
+	})
+	return out
+}
+
 // TopPrefixes retorna top N primeiras-palavras de user msgs.
 func TopPrefixes(sessions []*model.Session, n int) []WordCount {
 	freq := map[string]int{}

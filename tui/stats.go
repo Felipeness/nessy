@@ -360,11 +360,23 @@ func (v statsView) renderDetailed(width int) string {
 	fmt.Fprintln(&b, header.Render("🔁 Sinais de retrabalho (palavras nas suas msgs)"))
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 	fmt.Fprintln(&b, muted.Render(
-		"  Conta msgs SUAS contendo: 'fix', 'bug', 'errado', 'não funciona',"))
-	fmt.Fprintln(&b, muted.Render(
-		"  'rollback', 'cancela', 'broken', etc. Mede iteração/frustração."))
-	fmt.Fprintf(&b, "  %d de %d msgs (%.0f%%) — %s\n\n",
+		"  Mede iteração/frustração via texto das suas mensagens."))
+	fmt.Fprintf(&b, "  %d de %d msgs (%.0f%%) — %s\n",
 		hits, totalMsgs, rate*100, rateStyle.Render(rateLabel))
+	// Top palavras detectadas
+	breakdown := stats.ErrorRateBreakdown(sessions)
+	if len(breakdown) > 0 {
+		fmt.Fprintln(&b, muted.Render("  Palavras detectadas:"))
+		for i, p := range breakdown {
+			if i >= 8 {
+				break
+			}
+			fmt.Fprintf(&b, "    %s %s\n",
+				lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-15s", "'"+p.Pattern+"'")),
+				muted.Render(fmt.Sprintf("%d×", p.Count)))
+		}
+	}
+	b.WriteByte('\n')
 
 	// F3 — Prefixos comuns
 	fmt.Fprintln(&b, header.Render("✏️ Como você inicia mensagens"))
@@ -434,13 +446,22 @@ func (v statsView) renderDetailed(width int) string {
 					countStyle = critStyle
 				}
 				when := h.FirstAt.Local().Format("02/01 15:04")
+				// Linha 1: stats
 				fmt.Fprintf(&b, "  %s %s %s %s %s\n",
 					countStyle.Bold(true).Render(fmt.Sprintf("%d×", h.Count)),
 					lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-12s", h.ToolName)),
 					muted.Render(fmt.Sprintf("[%s]", h.SessionID[:8])),
 					muted.Render(when),
-					muted.Render(fmt.Sprintf("· span %s · hash %s",
-						fmtSecs(h.SpanSecs), h.InputHash[:8])))
+					muted.Render(fmt.Sprintf("· span %s", fmtSecs(h.SpanSecs))))
+				// Linha 2: preview do input (o que tava sendo chamado)
+				preview := h.InputPreview
+				if preview == "" {
+					preview = "(sem preview)"
+				}
+				fmt.Fprintf(&b, "    %s %s\n",
+					muted.Render("→"),
+					lipgloss.NewStyle().Foreground(colorMuted).Italic(true).
+						Render(preview))
 			}
 		}
 	}

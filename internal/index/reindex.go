@@ -21,7 +21,8 @@ type ReindexStats struct {
 //   v2: original
 //   v3: adiciona sidechain_turns/sidechain_agents (re-Upsert metadata)
 //   v4: tool_events table populada pra loop detection
-const parserVersion = "4"
+//   v5: tool_events ganha input_preview pra UI
+const parserVersion = "5"
 
 // Reindex walks root looking for *.jsonl files (excluding subagents/),
 // re-parsing only those whose mtime is newer than the cached value.
