@@ -447,6 +447,9 @@ func (m *Model) moveCursor(delta int) {
 		m.tools.cursor = clamp(m.tools.cursor+delta, 0, len(m.tools.stats)-1)
 	case tabThreads:
 		m.threads.MoveCursor(delta)
+	case tabStats:
+		// Stats Detailed tem body longo — ↑↓ scrolla a view
+		m.stats.Scroll(delta)
 	}
 }
 

@@ -121,7 +121,10 @@ func CostThisMonth(sessions []*model.Session, p *pricing.Pricing) MonthCost {
 
 	var acc, today float64
 	for _, s := range sessions {
-		if s.StartTime.Before(startOfMonth) {
+		// Inclui sessions que terminaram (ou ainda rolam) neste mês — não só
+		// as que começaram. Sessions longas (multi-dia) são contadas no mês
+		// onde a maior parte da atividade caiu (heurística: endTime).
+		if s.EndTime.Before(startOfMonth) {
 			continue
 		}
 		c, ok := p.Cost(s)
@@ -129,7 +132,8 @@ func CostThisMonth(sessions []*model.Session, p *pricing.Pricing) MonthCost {
 			continue
 		}
 		acc += c.USD
-		if s.StartTime.After(startOfDay) || s.StartTime.Equal(startOfDay) {
+		// Today: session que terminou hoje OU ainda em curso
+		if s.EndTime.After(startOfDay) || s.EndTime.Equal(startOfDay) {
 			today += c.USD
 		}
 	}

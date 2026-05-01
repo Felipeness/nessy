@@ -59,9 +59,27 @@ type statsView struct {
 	mode      statsMode
 	period    statsPeriod
 
+	// scroll é o offset (em linhas) do início do body. ↑↓ ajustam.
+	// Necessário porque o body do Detailed é longo e não cabe num terminal
+	// padrão; lipgloss.Height clampa truncando o final.
+	scroll int
+
 	// Caches por (mode, period, width). Evita re-render a cada keystroke.
 	cache map[string]string
 }
+
+// Scroll move o offset por delta linhas, clamping em [0, +∞). Saturação
+// do limite superior fica a cargo do dispatcher (que conhece o nº de linhas
+// renderizadas).
+func (v *statsView) Scroll(delta int) {
+	v.scroll += delta
+	if v.scroll < 0 {
+		v.scroll = 0
+	}
+}
+
+// ResetScroll volta pro topo. Útil ao mudar de modo/período.
+func (v *statsView) ResetScroll() { v.scroll = 0 }
 
 func newStatsView(sessions []*model.Session, p *pricing.Pricing, db *index.DB) statsView {
 	return statsView{
@@ -79,11 +97,13 @@ func (v *statsView) invalidate() {
 // ToggleMode cicla overview → models → detailed → overview.
 func (v *statsView) ToggleMode() {
 	v.mode = (v.mode + 1) % 3
+	v.scroll = 0
 }
 
 // TogglePeriod cicla all → 7d → 30d → all.
 func (v *statsView) TogglePeriod() {
 	v.period = (v.period + 1) % 3
+	v.scroll = 0
 	v.invalidate()
 }
 
@@ -106,7 +126,8 @@ func (v statsView) filteredSessions() []*model.Session {
 
 // renderGlobal é o dispatcher: header com modos + filtro + corpo do modo selecionado.
 // Body tem cache por (mode, period, width) — header sempre rerenderiza pra
-// refletir destaque das sub-tabs/período.
+// refletir destaque das sub-tabs/período. Aplica scroll por skip de linhas
+// no início do body (lipgloss.Height clampa truncando o final naturalmente).
 func (v statsView) renderGlobal(width int) string {
 	header := v.renderModeHeader(width) + "\n"
 	cacheKey := fmt.Sprintf("%d:%d:%d", v.mode, v.period, width)
@@ -121,6 +142,14 @@ func (v statsView) renderGlobal(width int) string {
 			body = v.renderDetailed(width)
 		}
 		v.cache[cacheKey] = body
+	}
+	if v.scroll > 0 {
+		lines := strings.Split(body, "\n")
+		if v.scroll >= len(lines) {
+			body = ""
+		} else {
+			body = strings.Join(lines[v.scroll:], "\n")
+		}
 	}
 	return header + body
 }
