@@ -1003,6 +1003,7 @@ func cmdAdviseCLI(args []string) {
 	icons := map[string]string{
 		"skill":           "🛠️ ",
 		"hook":            "🪝",
+		"cli":             "⚡",
 		"model_downgrade": "💸",
 		"cache":           "💾",
 		"subagent":        "🌳",

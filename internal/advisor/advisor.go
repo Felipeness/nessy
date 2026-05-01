@@ -6,10 +6,21 @@
 //
 //	skill          — padrão de uso vira candidato a skill
 //	hook           — comando repetido depois de tool específico
+//	cli            — Bash com CLI nativo melhor disponível (gh, fd, rg, etc)
 //	model_downgrade— sessions simples usando modelo caro
 //	cache          — arquivo tocado em N sessions vira CLAUDE.md/skill
 //	subagent       — paralelismo perdido (N reads em janela curta)
 //	claude_md      — contexto repetido cross-session
+//
+// Política de hierarquia (importante):
+//
+//	CLI > skill > hook > MCP server
+//
+// Sempre que detectar padrão de uso de Bash que TEM um CLI nativo melhor,
+// recomende o CLI primeiro. Só sugere MCP server se NENHUM CLI cobre o
+// caso (ex: queries SQL ad-hoc num DB, navegação simbólica em código).
+// Razão: CLI funciona em qualquer contexto (pipe, scripts, terminal),
+// MCP só funciona dentro do Claude Code e exige setup extra.
 //
 // Cada regra é independente e pode ser adicionada/desativada.
 package advisor
@@ -57,6 +68,9 @@ func Run(db *index.DB, p *pricing.Pricing, sessions []*model.Session) ([]Recomme
 		out = append(out, recs...)
 	}
 	if recs, err := ruleSkillFromLoopDetected(db); err == nil {
+		out = append(out, recs...)
+	}
+	if recs, err := ruleCLIAlternative(db); err == nil {
 		out = append(out, recs...)
 	}
 
@@ -318,6 +332,163 @@ func ruleSkillFromLoopDetected(db *index.DB) ([]Recommendation, error) {
 			Savings:    fmt.Sprintf("~%d tool calls eliminados", h.Count-1),
 			Confidence: "high",
 			Score:      float64(h.Count) * 7,
+		})
+	}
+	return out, nil
+}
+
+// =============================================================================
+// Rule: padrões de Bash que têm CLI nativo melhor
+// =============================================================================
+
+// cliPattern descreve um padrão suspeito num Bash input + a CLI mais adequada.
+// Use o CLI primeiro; se não cobre o caso, aí sim discutir MCP server.
+type cliPattern struct {
+	// matches são substrings que disparam a recomendação (case-insensitive).
+	matches []string
+	// cli é o nome do binário recomendado.
+	cli string
+	// rationale explica POR QUE o CLI é melhor.
+	rationale string
+	// example é uma linha de uso simples.
+	example string
+	// minOccurrences pra disparar (evita falso positivo em uso esporádico).
+	minOccurrences int
+}
+
+var cliPatterns = []cliPattern{
+	{
+		matches:        []string{"api.github.com", "raw.githubusercontent.com"},
+		cli:            "gh",
+		rationale:      "gh já faz auth automático (gh auth login), respeita rate limits, e tem subcomandos pra issues/PRs/repos.",
+		example:        "gh api repos/{owner}/{repo} · gh pr view 123 · gh issue list",
+		minOccurrences: 3,
+	},
+	{
+		matches:        []string{"git diff --name-only", "git log --pretty="},
+		cli:            "gh + git aliases",
+		rationale:      "Pra inspeção de PRs/branches, gh é mais alto nível. Pra git puro, define alias em ~/.gitconfig em vez de invocar Bash sempre.",
+		example:        "gh pr diff · gh pr checks · git config --global alias.lg 'log --oneline'",
+		minOccurrences: 5,
+	},
+	{
+		matches:        []string{`find . -name "*`, `find . -type f`},
+		cli:            "fd",
+		rationale:      "fd é 5-10× mais rápido, syntax mais natural, respeita .gitignore por default.",
+		example:        "fd '\\.go$' · fd -e ts components/",
+		minOccurrences: 4,
+	},
+	{
+		matches:        []string{"grep -r", "grep -R"},
+		cli:            "rg (ripgrep)",
+		rationale:      "ripgrep é muito mais rápido que grep -r, formato de output melhor, suporta tipos (--type go), respeita .gitignore.",
+		example:        "rg 'pattern' · rg --type go 'func' · rg -l 'TODO'",
+		minOccurrences: 4,
+	},
+	{
+		matches:        []string{"jq -r", "jq '.["},
+		cli:            "jq (já é CLI)",
+		rationale:      "Tu já usa jq — bom! Mas se padrões se repetem, vira candidato a alias ou função shell pra reduzir digitação.",
+		example:        "function gh-prs() { gh pr list --json number,title | jq -r '.[]|\"\\(.number) \\(.title)\"' }",
+		minOccurrences: 8,
+	},
+	{
+		matches:        []string{"curl http", "wget http"},
+		cli:            "httpie ou xh",
+		rationale:      "Pra queries HTTP exploratórias: httpie/xh tem syntax mais legível, pretty-print JSON, default reasonável (Accept: application/json).",
+		example:        "http GET api.example.com/users · xh post api.example.com email=a@b.com",
+		minOccurrences: 5,
+	},
+	{
+		matches:        []string{"docker run -it", "docker exec -it"},
+		cli:            "lazydocker",
+		rationale:      "Pra inspeção interativa de containers/imagens, TUI é mais ergonômico que CLI flags.",
+		example:        "lazydocker (binding inicial vai pros containers ativos)",
+		minOccurrences: 4,
+	},
+	{
+		matches:        []string{"kubectl get", "kubectl describe"},
+		cli:            "k9s",
+		rationale:      "Pra exploração de pods/deployments, k9s é TUI live com filtros e logs streaming. kubectl puro fica pra scripts.",
+		example:        "k9s (navega namespaces, segue logs, restart pods, tudo via teclado)",
+		minOccurrences: 5,
+	},
+}
+
+func ruleCLIAlternative(db *index.DB) ([]Recommendation, error) {
+	rows, err := db.Conn().Query(`
+		SELECT input_preview, COUNT(*) AS n
+		FROM tool_events
+		WHERE tool_name = 'Bash' AND input_preview != ''
+		GROUP BY input_preview
+		ORDER BY n DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Conta ocorrências por pattern
+	type hit struct {
+		pattern *cliPattern
+		count   int
+		samples []string // primeiros previews que casaram
+	}
+	hits := map[string]*hit{}
+	for rows.Next() {
+		var preview string
+		var n int
+		if err := rows.Scan(&preview, &n); err != nil {
+			continue
+		}
+		low := strings.ToLower(preview)
+		for i := range cliPatterns {
+			pat := &cliPatterns[i]
+			matched := false
+			for _, m := range pat.matches {
+				if strings.Contains(low, strings.ToLower(m)) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			h, ok := hits[pat.cli]
+			if !ok {
+				h = &hit{pattern: pat}
+				hits[pat.cli] = h
+			}
+			h.count += n
+			if len(h.samples) < 3 {
+				sample := preview
+				if len(sample) > 60 {
+					sample = sample[:59] + "…"
+				}
+				h.samples = append(h.samples, sample)
+			}
+		}
+	}
+
+	var out []Recommendation
+	for cli, h := range hits {
+		if h.count < h.pattern.minOccurrences {
+			continue
+		}
+		out = append(out, Recommendation{
+			Type:  "cli",
+			Title: fmt.Sprintf("Usa %s — CLI '%s' é alternativa direta", strings.Join(h.pattern.matches[:1], ""), cli),
+			Description: fmt.Sprintf(
+				"Detectei %d Bash calls com padrão de %s. %s",
+				h.count, strings.Join(h.pattern.matches, "/"), h.pattern.rationale),
+			Evidence: fmt.Sprintf("count=%d · samples=%s",
+				h.count, strings.Join(h.samples, " | ")),
+			Action: fmt.Sprintf(
+				"Substitui por: %s. Exemplo: %s",
+				cli, h.pattern.example),
+			Savings:    fmt.Sprintf("~%d Bash invocations × menos digitação/parsing", h.count),
+			Confidence: confidenceFromCount(h.count / 2),
+			Score:      float64(h.count) * 4,
 		})
 	}
 	return out, nil
