@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -839,22 +840,35 @@ func mockInput() *statusline.Input {
 }
 
 // =============================================================================
-// Daemon — launchd integration pra macOS
+// Daemon — auto-start nessy serve no login, cross-platform
+//   macOS:   launchd (LaunchAgent em ~/Library/LaunchAgents/)
+//   Linux:   systemd user service (~/.config/systemd/user/)
+//   Windows: instruções manuais (Task Scheduler) — fora do escopo automático
 // =============================================================================
 
-const launchdLabel = "com.felipe-coelho.nessy"
+const daemonLabel = "com.felipe-coelho.nessy"
 
-func launchdPlistPath() string {
+// daemonPlistPath, daemonSystemdUnitPath, etc. dependem do SO.
+func daemonConfigPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "LaunchAgents", daemonLabel+".plist")
+	case "linux":
+		return filepath.Join(home, ".config", "systemd", "user", "nessy.service")
+	default:
+		return ""
+	}
 }
 
-func renderPlist(binPath string) string {
-	return `<?xml version="1.0" encoding="UTF-8"?>
+func renderDaemonConfig(binPath string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Label</key><string>` + launchdLabel + `</string>
+	<key>Label</key><string>` + daemonLabel + `</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>` + binPath + `</string>
@@ -872,6 +886,24 @@ func renderPlist(binPath string) string {
 </dict>
 </plist>
 `
+	case "linux":
+		return `[Unit]
+Description=Nessy — Claude Code session indexer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=` + binPath + ` serve --no-open
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/tmp/nessy.log
+StandardError=append:/tmp/nessy.err
+
+[Install]
+WantedBy=default.target
+`
+	}
+	return ""
 }
 
 func cmdDaemonInstall() {
@@ -879,14 +911,34 @@ func cmdDaemonInstall() {
 	if err != nil {
 		fatal(err)
 	}
-	plistPath := launchdPlistPath()
+	switch runtime.GOOS {
+	case "darwin":
+		daemonInstallDarwin(binPath)
+	case "linux":
+		daemonInstallLinux(binPath)
+	case "windows":
+		fmt.Println("Windows não tem auto-install ainda. Pra rodar no login:")
+		fmt.Println()
+		fmt.Println("Opção 1 (Task Scheduler):")
+		fmt.Println("  schtasks /create /tn Nessy /tr \"" + binPath + " serve --no-open\" /sc onlogon")
+		fmt.Println()
+		fmt.Println("Opção 2 (Startup folder):")
+		fmt.Println("  cria atalho de \"" + binPath + " serve --no-open\" em")
+		fmt.Println("  shell:startup")
+	default:
+		fmt.Fprintf(os.Stderr, "daemon-install não suportado em %s\n", runtime.GOOS)
+		os.Exit(1)
+	}
+}
+
+func daemonInstallDarwin(binPath string) {
+	plistPath := daemonConfigPath()
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0755); err != nil {
 		fatal(err)
 	}
-	if err := os.WriteFile(plistPath, []byte(renderPlist(binPath)), 0644); err != nil {
+	if err := os.WriteFile(plistPath, []byte(renderDaemonConfig(binPath)), 0644); err != nil {
 		fatal(err)
 	}
-	// Carrega no launchd. Tolera "already loaded" — re-carrega via unload+load.
 	_ = exec.Command("launchctl", "unload", plistPath).Run()
 	if out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "launchctl load: %v\n%s\n", err, out)
@@ -898,33 +950,72 @@ func cmdDaemonInstall() {
 	fmt.Println("  Web UI:  http://localhost:5555")
 	fmt.Println()
 	fmt.Println("Reinicia agora:")
-	fmt.Println("  launchctl kickstart -k gui/$UID/" + launchdLabel)
+	fmt.Println("  launchctl kickstart -k gui/$UID/" + daemonLabel)
+}
+
+func daemonInstallLinux(binPath string) {
+	unitPath := daemonConfigPath()
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0755); err != nil {
+		fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte(renderDaemonConfig(binPath)), 0644); err != nil {
+		fatal(err)
+	}
+	// Reload + enable + start
+	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	if out, err := exec.Command("systemctl", "--user", "enable", "--now", "nessy.service").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "systemctl: %v\n%s\n", err, out)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ daemon instalado: %s\n", unitPath)
+	fmt.Println("  binário:", binPath)
+	fmt.Println("  logs:    journalctl --user -u nessy.service -f")
+	fmt.Println("  Web UI:  http://localhost:5555")
 }
 
 func cmdDaemonUninstall() {
-	plistPath := launchdPlistPath()
-	if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
-		fmt.Println("daemon não está instalado")
-		return
+	switch runtime.GOOS {
+	case "darwin":
+		plistPath := daemonConfigPath()
+		if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
+			fmt.Println("daemon não está instalado")
+			return
+		}
+		_ = exec.Command("launchctl", "unload", plistPath).Run()
+		if err := os.Remove(plistPath); err != nil {
+			fatal(err)
+		}
+		fmt.Printf("✓ daemon removido: %s\n", plistPath)
+	case "linux":
+		unitPath := daemonConfigPath()
+		_ = exec.Command("systemctl", "--user", "disable", "--now", "nessy.service").Run()
+		if _, err := os.Stat(unitPath); errors.Is(err, os.ErrNotExist) {
+			fmt.Println("daemon não está instalado")
+			return
+		}
+		if err := os.Remove(unitPath); err != nil {
+			fatal(err)
+		}
+		_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+		fmt.Printf("✓ daemon removido: %s\n", unitPath)
+	case "windows":
+		fmt.Println("Pra remover no Windows:")
+		fmt.Println("  schtasks /delete /tn Nessy /f")
+	default:
+		fmt.Fprintf(os.Stderr, "daemon-uninstall não suportado em %s\n", runtime.GOOS)
 	}
-	_ = exec.Command("launchctl", "unload", plistPath).Run()
-	if err := os.Remove(plistPath); err != nil {
-		fatal(err)
-	}
-	fmt.Printf("✓ daemon removido: %s\n", plistPath)
 }
 
 func cmdDaemonStatus() {
-	plistPath := launchdPlistPath()
-	if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
-		fmt.Println("daemon: NÃO INSTALADO")
-		fmt.Println("  rode: nessy daemon-install")
-		return
+	switch runtime.GOOS {
+	case "darwin":
+		daemonStatusDarwin()
+	case "linux":
+		daemonStatusLinux()
+	default:
+		fmt.Printf("daemon-status não suportado em %s\n", runtime.GOOS)
 	}
-	out, _ := exec.Command("launchctl", "list", launchdLabel).CombinedOutput()
-	fmt.Printf("plist: %s\n\n", plistPath)
-	fmt.Print(string(out))
-	// Bate na porta pra ver se tá saudável
+	// Health probe é universal (qualquer SO com daemon rodando responderá)
 	resp, err := http.Get("http://127.0.0.1:5555/health")
 	if err != nil {
 		fmt.Println("\nhealth: SEM RESPOSTA (daemon pode não estar pronto)")
@@ -936,4 +1027,28 @@ func cmdDaemonStatus() {
 	} else {
 		fmt.Printf("\nhealth: status %d\n", resp.StatusCode)
 	}
+}
+
+func daemonStatusDarwin() {
+	plistPath := daemonConfigPath()
+	if _, err := os.Stat(plistPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("daemon: NÃO INSTALADO")
+		fmt.Println("  rode: nessy daemon-install")
+		return
+	}
+	out, _ := exec.Command("launchctl", "list", daemonLabel).CombinedOutput()
+	fmt.Printf("plist: %s\n\n", plistPath)
+	fmt.Print(string(out))
+}
+
+func daemonStatusLinux() {
+	unitPath := daemonConfigPath()
+	if _, err := os.Stat(unitPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Println("daemon: NÃO INSTALADO")
+		fmt.Println("  rode: nessy daemon-install")
+		return
+	}
+	out, _ := exec.Command("systemctl", "--user", "status", "nessy.service", "--no-pager").CombinedOutput()
+	fmt.Printf("unit: %s\n\n", unitPath)
+	fmt.Print(string(out))
 }

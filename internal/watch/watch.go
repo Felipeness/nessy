@@ -1,6 +1,6 @@
 // Package watch implementa monitoramento passivo de sessions Claude Code
 // rodando em background (junto com `nessy serve`). Roda detectores em
-// goroutines e dispara notificações osascript quando achar:
+// goroutines e dispara notificações nativas (sysutil.Notify) quando achar:
 //
 //   - Loop: mesma tool com mesmo input ≥3× em ≤60s
 //   - Cost spike: session em curso com cost > 2× mediana do skill
@@ -19,11 +19,12 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/felipeness/nessy/internal/sysutil"
 )
 
 // Config controla os detectores. Zero = defaults razoáveis.
@@ -209,7 +210,8 @@ func (w *Watcher) observeTool(sessionFile string, ts time.Time, name, hash strin
 	}
 }
 
-// notifyLoop emite uma osascript notification, com debounce por alertKey.
+// notifyLoop emite notificação nativa (cross-platform via sysutil),
+// com debounce por alertKey.
 func (w *Watcher) notifyLoop(sessionFile, toolName string, count int) {
 	alertKey := "loop:" + filepath.Base(sessionFile) + ":" + toolName
 	if !w.shouldNotify(alertKey) {
@@ -222,7 +224,9 @@ func (w *Watcher) notifyLoop(sessionFile, toolName string, count int) {
 	title := "Nessy: loop detectado"
 	body := fmt.Sprintf("%s repetido %d× em [%s]. Vale revisar.", toolName, count, sid)
 	w.logger.Printf("LOOP %s × %d in %s", toolName, count, sid)
-	notify(title, body)
+	if err := sysutil.Notify(title, body); err != nil {
+		w.logger.Printf("notify failed: %v", err)
+	}
 }
 
 // shouldNotify devolve true se passou tempo suficiente desde último envio
@@ -236,17 +240,6 @@ func (w *Watcher) shouldNotify(key string) bool {
 	}
 	w.lastSent[key] = now
 	return true
-}
-
-// notify dispara `osascript -e 'display notification "..." with title "..."'`.
-// Falhas são silenciosas — notification não é critical path.
-func notify(title, body string) {
-	// Escapa aspas duplas pra não quebrar AppleScript
-	t := strings.ReplaceAll(title, `"`, `\"`)
-	b := strings.ReplaceAll(body, `"`, `\"`)
-	script := fmt.Sprintf(`display notification "%s" with title "%s"`, b, t)
-	cmd := exec.Command("osascript", "-e", script)
-	_ = cmd.Run()
 }
 
 // hashInput devolve hash curto e estável do input JSON.

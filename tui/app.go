@@ -17,6 +17,7 @@ import (
 	"github.com/felipeness/nessy/internal/index"
 	"github.com/felipeness/nessy/internal/model"
 	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/sysutil"
 )
 
 type tabID int
@@ -423,7 +424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.OpenDir):
 			s := m.selectedForActiveTab()
 			if s != nil {
-				_ = exec.Command("open", s.ProjectDir).Start()
+				_ = sysutil.OpenPath(s.ProjectDir)
 			}
 			return m, nil
 		case keyMatches(k, keys.Export):
