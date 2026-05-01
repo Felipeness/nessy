@@ -27,6 +27,7 @@ func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/meta", s.handleMeta)
 	mux.HandleFunc("/api/advise", s.handleAdvise)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/threads", s.handleThreads)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionByID) // /api/sessions/<id> + /api/sessions/<id>/messages
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -798,6 +799,85 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, resp)
+}
+
+// threadResp é uma simplificação de stats.Thread pro JSON.
+// Achata ThreadSession → fields no nível session (sem ponteiro embed).
+type threadResp struct {
+	ProjectDir string             `json:"project_dir"`
+	Branch     string             `json:"branch"`
+	StartTime  string             `json:"start_time"`
+	EndTime    string             `json:"end_time"`
+	TotalCost  float64            `json:"total_cost"`
+	Sessions   []threadSessionOut `json:"sessions"`
+}
+
+type threadSessionOut struct {
+	SessionID       string  `json:"session_id"`
+	StartTime       string  `json:"start_time"`
+	EndTime         string  `json:"end_time"`
+	MessageCount    int     `json:"message_count"`
+	Model           string  `json:"model"`
+	FirstUserMsg    string  `json:"first_user_msg"`
+	GapFromPrev     int64   `json:"gap_from_prev_secs"`
+	Kind            string  `json:"kind"`
+	SidechainAgents int     `json:"sidechain_agents"`
+	SidechainTurns  int     `json:"sidechain_turns"`
+	CostUSD         float64 `json:"cost_usd"`
+}
+
+// handleThreads agrupa sessions em threads (mesmo project+branch, gap<30min).
+// Retorna JSON ordenado por StartTime desc.
+func (s *Server) handleThreads(w http.ResponseWriter, r *http.Request) {
+	all, err := s.sessionsAll()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	threads := stats.BuildThreads(all, 30*time.Minute)
+	for _, t := range threads {
+		t.CalcTotals(func(sess *model.Session) (float64, bool) {
+			if s.Pricing == nil {
+				return 0, false
+			}
+			c, ok := s.Pricing.Cost(sess)
+			return c.USD, ok
+		})
+	}
+	out := make([]threadResp, 0, len(threads))
+	for _, t := range threads {
+		var sessions []threadSessionOut
+		for _, ts := range t.Sessions {
+			cost := 0.0
+			if s.Pricing != nil {
+				if c, ok := s.Pricing.Cost(ts.Session); ok {
+					cost = c.USD
+				}
+			}
+			sessions = append(sessions, threadSessionOut{
+				SessionID:       ts.SessionID,
+				StartTime:       ts.StartTime.Format(time.RFC3339),
+				EndTime:         ts.EndTime.Format(time.RFC3339),
+				MessageCount:    ts.MessageCount,
+				Model:           ts.Model,
+				FirstUserMsg:    ts.FirstUserMsg,
+				GapFromPrev:     int64(ts.GapFromPrev.Seconds()),
+				Kind:            ts.Kind,
+				SidechainAgents: ts.SidechainAgents,
+				SidechainTurns:  ts.SidechainTurns,
+				CostUSD:         cost,
+			})
+		}
+		out = append(out, threadResp{
+			ProjectDir: t.ProjectDir,
+			Branch:     t.Branch,
+			StartTime:  t.StartTime.Format(time.RFC3339),
+			EndTime:    t.EndTime.Format(time.RFC3339),
+			TotalCost:  t.TotalCost,
+			Sessions:   sessions,
+		})
+	}
+	writeJSON(w, 200, out)
 }
 
 // handleConfig: GET retorna config atual; POST sobrescreve.

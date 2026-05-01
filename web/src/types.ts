@@ -44,6 +44,30 @@ export type AdviseResponse = {
   count: number
 }
 
+// Phase 12.W parte 2 — threads
+export type ThreadSessionOut = {
+  session_id: string
+  start_time: string
+  end_time: string
+  message_count: number
+  model: string
+  first_user_msg: string
+  gap_from_prev_secs: number
+  kind: string // "first" | "compact" | "resumed"
+  sidechain_agents: number
+  sidechain_turns: number
+  cost_usd: number
+}
+
+export type ThreadResp = {
+  project_dir: string
+  branch: string
+  start_time: string
+  end_time: string
+  total_cost: number
+  sessions: ThreadSessionOut[]
+}
+
 // Phase 12.W — config (espelha internal/config.Config seção Notify)
 export type NotifyConfig = {
   enabled: boolean
@@ -186,6 +210,7 @@ export type TabName =
   | 'ness'
   | 'meta'
   | 'advise'
+  | 'threads'
 
 // Meta tab — análise cross-session (file reuse, cost por ticket, convergence)
 export type FileReuse = {

@@ -15,6 +15,7 @@ const TABS: { id: TabName; label: string }[] = [
   { id: 'ness', label: '🧠 Ness' },
   { id: 'meta', label: '📊 Meta' },
   { id: 'advise', label: '💡 Advise' },
+  { id: 'threads', label: '🌳 Threads' },
 ]
 
 type Props = {

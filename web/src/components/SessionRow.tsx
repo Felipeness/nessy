@@ -39,6 +39,14 @@ export function SessionRow({ session: s, cost, onClick, selected }: Props) {
         {truncate(s.project_dir, 35)}
       </span>
       <span className="truncate text-[var(--color-fg)] flex-1">{s.first_user_msg}</span>
+      {s.sidechain_agents && s.sidechain_agents > 0 ? (
+        <span
+          className="text-purple-400 font-bold text-xs px-1.5 py-0.5 bg-purple-900/30 rounded"
+          title={`${s.sidechain_agents} subagents · ${s.sidechain_turns} turnos`}
+        >
+          ↳{s.sidechain_agents}
+        </span>
+      ) : null}
     </button>
   )
 }

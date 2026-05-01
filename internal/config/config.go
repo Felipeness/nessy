@@ -54,7 +54,9 @@ func DefaultConfig() *Config {
 	c.AI.GenModel = "qwen2.5:7b"
 	c.AI.EmbedModel = "nomic-embed-text"
 	c.AI.AutoGenerate = true
-	c.Notify.Enabled = true
+	// Notify: opt-in. Por default não notifica — ligar via Studio quando
+	// quiser. Default era true mas ficava barulhento demais.
+	c.Notify.Enabled = false
 	c.Notify.MinCount = 3
 	c.Notify.WindowSecs = 60
 	c.Notify.DebounceSecs = 30

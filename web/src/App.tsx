@@ -15,6 +15,7 @@ import { StudioTab } from './tabs/StudioTab'
 import { NessTab } from './tabs/NessTab'
 import { MetaTab } from './tabs/MetaTab'
 import { AdviseTab } from './tabs/AdviseTab'
+import { ThreadsTab } from './tabs/ThreadsTab'
 import type { ReindexStats, TabName } from './types'
 
 const VALID_TABS: TabName[] = [
@@ -31,6 +32,7 @@ const VALID_TABS: TabName[] = [
   'ness',
   'meta',
   'advise',
+  'threads',
 ]
 
 function tabFromHash(): TabName {
@@ -90,6 +92,7 @@ export default function App() {
       {tab === 'ness' && <NessTab />}
       {tab === 'meta' && <MetaTab reindexCounter={reindexCounter} />}
       {tab === 'advise' && <AdviseTab reindexCounter={reindexCounter} />}
+      {tab === 'threads' && <ThreadsTab reindexCounter={reindexCounter} />}
     </Layout>
   )
 }

@@ -1,6 +1,7 @@
 import type {
   AdviseResponse,
   NessyConfig,
+  ThreadResp,
   AIHealth,
   AISummary,
   Behavioral,
@@ -58,6 +59,7 @@ export const api = {
   stats: () => get<Stats>('/api/stats'),
   meta: () => get<MetaResponse>('/api/meta'),
   advise: () => get<AdviseResponse>('/api/advise'),
+  threads: () => get<ThreadResp[]>('/api/threads'),
   getConfig: () => get<NessyConfig>('/api/config'),
   saveConfig: async (cfg: NessyConfig) => {
     const res = await fetch('/api/config', {
