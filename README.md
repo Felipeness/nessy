@@ -1,13 +1,112 @@
 # claude-history
 
-Indexa, busca, analisa e dá feedback sobre **todas** as suas conversas do Claude Code num só lugar — independente da pasta onde você abriu cada uma.
+> Indexa, busca, analisa e dá feedback sobre **todas** as suas conversas do Claude Code num só lugar — local, rápido, e sem mandar nada pro cloud.
 
-Lê os JSONLs que o Claude Code grava em `~/.claude/projects/<encoded-cwd>/*.jsonl`, indexa em SQLite com FTS5, e expõe **3 frontends** sobre o mesmo backend:
+## Já passou por isso?
 
-- **CLI**: `claude-history list/show/fzf`
-- **TUI**: `claude-history tui` — Bubble Tea com 6 tabs
-- **Web UI + Studio**: `claude-history serve` — Vite/React com tabs de Stats, Costs, Behavior, AI insights e **Statusline Studio** (editor visual do statusline do Claude Code)
-- **Statusline**: `claude-history statusline-render` — binário que se pluga no `statusLine` do Claude Code e mostra cost/context/burn-rate/cluster live
+> Abriu uma sessão pro Claude semana passada e não acha mais — nem lembra qual projeto, qual branch, qual `--resume` puxar. Sabe que resolveu, só não sabe onde foi.
+
+> Tá usando Claude Code há um mês e não faz ideia de quanto gastou. $50? $500? E em qual projeto foi o pior? E hoje, já estourou orçamento?
+
+> Reexplicou pela quinta vez essa semana o mesmo padrão de código pra IA. Sente que tá fazendo o mesmo trabalho repetitivo, perdendo tokens, e o Claude não aprende com o que vocês já fizeram juntos.
+
+> O Claude tá lá rodando há 3 horas, lançou 47 sub-agentes e você não tem ideia se tá progredindo ou preso num loop chamando o mesmo `pkill` 8 vezes seguidas.
+
+> Queria fazer standup mas não consegue lembrar o que fez na segunda. Ou queria saber: *"que decisões eu tomei sobre auth nessa última sprint?"*
+
+> Começa um projeto novo e pensa *"será que já passei por algo parecido?"* — mas teria que abrir 50 JSONLs pra descobrir.
+
+---
+
+## É pra isso que existe
+
+claude-history é um binário Go local que lê seus `~/.claude/projects/*.jsonl`, indexa tudo num SQLite, e te dá **4 jeitos** de explorar:
+
+| Frontend | Como roda | Pra que serve |
+|---|---|---|
+| **TUI** | `claude-history tui` | Exploração diária no terminal — 10 abas, atalhos vim, layout adaptativo |
+| **Web Studio** | `claude-history serve` | Dashboards visuais, charts, statusline editor drag-drop |
+| **CLI** | `claude-history list/search/ask/...` | Scripting, pipes, integração shell — JSON-first |
+| **MCP server** | `claude-history mcp-install` | Outros Claudes consultam tua história enquanto te ajudam |
+
+---
+
+## O que ele te entrega
+
+🔍 **Acha qualquer session em segundos** — busca híbrida via Reciprocal Rank Fusion combinando full-text (BM25), embeddings semânticos e metadata. Pesquisa por nome de função (`UserAuth`), frase em linguagem natural (*"como migrei pro Postgres"*), filtros (`project:X branch:feat/Y since:7d cost:>1`).
+
+💰 **Custo real, sempre na tua frente** — total acumulado, "hoje" pro-rata pra sessions multi-dia, projeção fim do mês, comparação semana atual vs anterior, top 5 sessions mais caras, cache savings, alertas configuráveis (warn $5/dia, alert $10/dia).
+
+🧠 **Segunda memória** — IA local (Ollama, sem mandar nada pro cloud) extrai de cada session: problema, solução, decisões com rationale, learnings, tech usado, perguntas em aberto. Você pergunta *"o que aprendi sobre X esse mês?"* e ela responde com citações `[abc12345]` linkando às sessions reais.
+
+🔁 **Pega quando o Claude tá preso** — tabela de tool events grava todo `tool_use` com hash do input. Detecta retroativamente: *"esta session chamou Bash com mesmo comando 5× em 49 minutos — provavelmente preso em retry"*. Mostra o comando exato pra revisar.
+
+📊 **Behavior insights** — sinais de retrabalho (*"você usou 'fix' 120×"*), padrões repetitivos (script candidates), token waste, anti-patterns, perfil de uso (*"toca menos código depois das 18h"*), comparação com mediana do projeto.
+
+🌳 **Visualiza threads e sub-agentes** — sessions de 78h não são uma bolha; são threads que se ramificam. Vê hierarquia projeto → branch → sub-agente, com badge `↳92 subs` quando uma session disparou 92 sub-agentes em paralelo. 6 visualizações: tree, cards, miller, graph DAG, timeline, galaxy (force-directed em Braille).
+
+📝 **Standup automático** — `claude-history standup --since 7d` cospe markdown formatado com Concluído/Decisões/Em aberto pronto pra colar no Slack.
+
+📍 **Statusline live no Claude Code** — `~/Desktop/repo │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m` — mostra contexto, cost da session, burn rate em tempo real. Editor visual no Studio (5 themes, 3 styles, drag-drop).
+
+---
+
+## CLI em 30 segundos
+
+A interface mais poderosa pra script + uso diário. Todos os comandos retornam human-readable por default, **JSON com `--json`**. Lêem o SQLite direto, **sem precisar do daemon rodando**.
+
+```bash
+# 🔍 Encontrar sessions
+claude-history list                           # tabela colorida
+claude-history fzf                            # fzf interativo, Enter retoma a session
+claude-history search "auth middleware"       # busca híbrida (BM25 + dense + metadata)
+claude-history search "docker" --mode body    # só dentro do body das mensagens
+claude-history similar "migrate to postgres"  # top 5 sessions semelhantes via embedding
+
+# 🧠 Perguntar pro teu histórico (RAG com Ollama)
+claude-history ask "como resolvi o bug de auth no NestJS?"
+# → "Você usou um guard customizado validando JWT em 3 camadas... [6df22c8d]"
+# → fontes listadas com session_id + similarity %
+
+# 📊 Análise
+claude-history insights --type token_waste            # advisor — onde tá queimando token
+claude-history knowledge 6df22c8d                     # tudo que extraiu de 1 session
+claude-history aggregated                             # cross-session: padrões, decisões, em aberto
+claude-history project ~/Desktop/Projects/foo         # stats do projeto: p90, tech, top tools
+claude-history show 6df22c8d                          # detalhes brutos de 1 session
+
+# 📝 Standup pra colar no Slack
+claude-history standup --since 7d                     # editorial (Concluído/Decisões/Em aberto)
+claude-history standup --since 7d --format timeline   # cronológico
+claude-history standup --since 14d --format project   # agrupado por projeto + custo
+
+# 📍 Statusline + integrações
+claude-history statusline-install --preset compact    # liga no Claude Code
+claude-history statusline-preview --all               # 5 themes × 3 styles no terminal
+claude-history mcp-install                            # registra MCP server pra outros Claudes
+claude-history serve --no-open                        # sobe Studio web em :5555
+```
+
+**Use case matador**: Claude consultando seu próprio histórico mid-session.
+
+```bash
+# No meio de outra session do Claude Code, ele roda via Bash:
+claude-history ask "como resolvi auth bug 3 meses atrás?" --json
+# → ele recebe contexto rico citando session_ids reais, sem precisar reexplicar tudo
+```
+
+Pipe-friendly:
+
+```bash
+# Todas as sessions com cost > $5 dos últimos 7 dias, ordem cronológica
+claude-history search ":all" --json | jq '.[] | select(.cost_usd > 5)'
+
+# Open questions em aberto agora
+claude-history aggregated --json | jq '.open_questions[]'
+
+# Cost da semana por projeto
+claude-history standup --since 7d --format project
+```
 
 ## Instalação
 
@@ -140,57 +239,14 @@ Ativa: `launchctl load ~/Library/LaunchAgents/com.claude-history.plist`
 | 9 — Sistema (launchd + menu bar + notif) | 🟡 planned | daemon persistente, menu bar Mac, notificações p90/burn |
 | 10 — TUI session tree | 🟡 planned | detectar continuações por cwd+branch+gap, view tree |
 
-## CLI
+## CLI — referência completa
 
-### Comandos básicos
+Os comandos da seção [CLI em 30 segundos](#cli-em-30-segundos) acima cobrem o uso diário. Esta seção lista flags e formatos detalhados.
 
-```bash
-claude-history list                       # tabela
-claude-history list --json | jq '.[]'     # JSON pra script
-claude-history list --tsv                 # TSV
-claude-history show 6df22c8d              # detalhes (aceita ID curto)
-claude-history fzf                        # fzf interativo, Enter retoma
-claude-history tui                        # TUI Bubble Tea (9 tabs)
-claude-history serve                      # Web UI em http://localhost:5555
-claude-history statusline-install         # instala statusline no Claude Code
-claude-history statusline-preview --all   # preview no terminal (5 themes × 3 styles)
-```
+### Output formats
 
-### Query (Fase 7a) — pra scripts e Claude consumirem via Bash
-
-Todos retornam human-readable por default, JSON com `--json`. Lêem DB direto, **sem precisar daemon**. Falhas graceful (Ollama down → JSON com `error` ao invés de quebrar).
-
-```bash
-# Similar — top sessions parecidas via embedding+cosine
-claude-history similar "auth bug com middleware" --n 5 --json
-
-# Search — hybrid (default) / body / meta / sim
-claude-history search docker --mode body --json
-claude-history search "react auth" --all     # sem dedup, todos hits
-
-# Ask — chat Ness IA na CLI (RAG completo, fontes citadas)
-claude-history ask "como uso docker no mac?"
-# → "Você usa Docker via Colima... [6df22c8d]"
-# → fontes listadas com session_id + similarity %
-
-# Insights — advisor results (token_waste, anti_pattern, etc.)
-claude-history insights --type token_waste --json
-
-# Knowledge de 1 session (problem/solution/decisions/learnings/patterns/tech/open)
-claude-history knowledge 6df22c8d
-claude-history knowledge 6df22c8d --json | jq '.solution'
-
-# Aggregated cross-session — top patterns, decisões, problemas recorrentes, em aberto
-claude-history aggregated
-
-# Project stats — p90, tech, top tools, ticket pattern
-claude-history project ~/Desktop/Projects/claude-history --json
-
-# Standup markdown pra Slack/daily
-claude-history standup --since 7d                    # editorial (default — usa knowledge)
-claude-history standup --since 7d --format timeline  # cronológico por dia/hora
-claude-history standup --since 14d --format project  # agrupado por projeto + cost
-```
+Todos os comandos suportam `--json` pra integração com `jq`/scripts. Sem flag, output human-readable.
+Falhas graceful: se Ollama estiver down, retornam JSON com `{"error": "..."}` ao invés de panic.
 
 ### Use cases
 
