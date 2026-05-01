@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 type toolStat struct {

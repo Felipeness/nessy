@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 // Cosine retorna similaridade cosseno entre 2 vetores. Retorna 0 se algum for vazio.

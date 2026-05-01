@@ -28,7 +28,7 @@ export function Layout({ active, onTabChange, status, onRefresh, children }: Pro
   return (
     <div className="flex flex-col h-screen">
       <header className="border-b border-[var(--color-border)] px-4 py-2 flex items-center gap-4">
-        <h1 className="font-mono font-bold text-[var(--color-accent)]">claude-history</h1>
+        <h1 className="font-mono font-bold text-[var(--color-accent)]">Nessy</h1>
         <nav className="flex gap-1 flex-1">
           {TABS.map((t) => (
             <button

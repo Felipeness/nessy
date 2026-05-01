@@ -5,9 +5,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // --- N-grams ---

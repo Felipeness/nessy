@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
-	"github.com/felipeness/claude-history/internal/stats"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/stats"
 )
 
 // threadView é a tab "Threads". Agrupa sessions em threads (project+branch+gap)

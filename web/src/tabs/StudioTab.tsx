@@ -320,7 +320,7 @@ export function StudioTab() {
           <pre className="bg-[var(--color-card)] rounded p-3 text-xs overflow-x-auto">
             {`# 1. salvar config (botão acima)
 # 2. instalar entrada no settings.json:
-claude-history statusline-install --preset compact
+nessy statusline-install --preset compact
 
 # 3. reiniciar o Claude Code (statusLine só carrega no boot)`}
           </pre>
@@ -459,7 +459,7 @@ function HelpSection() {
             burn rate, ticket, cluster, etc.
           </p>
           <p>
-            <strong className="text-[var(--color-fg)]">Como o claude-history se pluga.</strong>{' '}
+            <strong className="text-[var(--color-fg)]">Como o Nessy se pluga.</strong>{' '}
             O Claude Code chama um binário a cada turno passando JSON via stdin. O nosso{' '}
             <code>statusline-render</code> lê esse JSON, consulta o daemon (cost histórico, p90,
             cluster), aplica seu config TOML e devolve uma linha ANSI colorida.
@@ -468,11 +468,11 @@ function HelpSection() {
             <strong className="text-[var(--color-fg)]">O que você faz aqui.</strong> Compõe a
             linha arrastando components, escolhe theme/style, ajusta thresholds (warn/critical) e
             simula cenários no Mock Data pra ver como ficaria. Salvar grava em{' '}
-            <code>~/.claude-history/statusline.toml</code>.
+            <code>~/.nessy/statusline.toml</code>.
           </p>
           <p>
             <strong className="text-[var(--color-fg)]">Pra plugar de verdade no Claude Code:</strong>{' '}
-            <code>claude-history statusline-install --preset compact</code> (ou max/powerline) →
+            <code>nessy statusline-install --preset compact</code> (ou max/powerline) →
             reiniciar o Claude Code (statusLine só carrega no boot).
           </p>
           <p>
@@ -687,7 +687,7 @@ function SortableChip({
     opacity: isDragging ? 0.5 : 1,
   }
   const tooltip =
-    description + (needsHistory ? '\n\n⚠ requer daemon claude-history ativo' : '')
+    description + (needsHistory ? '\n\n⚠ requer daemon Nessy ativo' : '')
   return (
     <div
       ref={setNodeRef}

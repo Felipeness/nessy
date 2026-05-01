@@ -16,49 +16,50 @@ import (
 
 	"context"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/config"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
-	"github.com/felipeness/claude-history/internal/pricing"
-	"github.com/felipeness/claude-history/internal/server"
-	"github.com/felipeness/claude-history/internal/statusline"
-	"github.com/felipeness/claude-history/tui"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/branding"
+	"github.com/felipeness/nessy/internal/config"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
+	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/server"
+	"github.com/felipeness/nessy/internal/statusline"
+	"github.com/felipeness/nessy/tui"
 )
 
-const usage = `claude-history — busca todas as suas conversas do Claude Code
+const usage = `nessy — busca todas as suas conversas do Claude Code
 
 USAGE:
-  claude-history list [--json|--tsv]   lista todas as sessions (default: tabela)
-  claude-history fzf                    abre fzf interativo, Enter retoma a session
-  claude-history show <session-id>      mostra detalhes de uma session
-  claude-history tui                    TUI Bubble Tea com tabs Search/Recent/Stats
-  claude-history serve [--port N]       sobe Web UI local em http://localhost:5555
-  claude-history statusline-render      consome stdin do Claude Code, escreve linha ANSI
-  claude-history statusline-install     escreve statusLine no ~/.claude/settings.json
-  claude-history statusline-preview     mostra o statusline com mock data no terminal
+  nessy list [--json|--tsv]   lista todas as sessions (default: tabela)
+  nessy fzf                    abre fzf interativo, Enter retoma a session
+  nessy show <session-id>      mostra detalhes de uma session
+  nessy tui                    TUI Bubble Tea com tabs Search/Recent/Stats
+  nessy serve [--port N]       sobe Web UI local em http://localhost:5555
+  nessy statusline-render      consome stdin do Claude Code, escreve linha ANSI
+  nessy statusline-install     escreve statusLine no ~/.claude/settings.json
+  nessy statusline-preview     mostra o statusline com mock data no terminal
 
 QUERY (Fase 7a — saída human-readable, ou JSON com --json):
-  claude-history similar <q> [--n 5]    top sessions parecidas via embedding
-  claude-history search <q> [--mode]    busca hybrid/body/meta (--all sem dedup)
-  claude-history ask <q>                pergunta pro Ness IA (RAG completo)
-  claude-history insights [--type X]    lista insights gerados (advisor)
-  claude-history knowledge <id>         problem/solution/decisions de 1 session
-  claude-history aggregated             top patterns/decisions/problemas cross-session
-  claude-history project <path>         p90, tech, top tools de 1 projeto
-  claude-history standup [--since 7d]   markdown timeline|project|editorial
+  nessy similar <q> [--n 5]    top sessions parecidas via embedding
+  nessy search <q> [--mode]    busca hybrid/body/meta (--all sem dedup)
+  nessy ask <q>                pergunta pro Ness IA (RAG completo)
+  nessy insights [--type X]    lista insights gerados (advisor)
+  nessy knowledge <id>         problem/solution/decisions de 1 session
+  nessy aggregated             top patterns/decisions/problemas cross-session
+  nessy project <path>         p90, tech, top tools de 1 projeto
+  nessy standup [--since 7d]   markdown timeline|project|editorial
 
 MCP (Fase 8):
-  claude-history mcp                    sobe MCP server em stdio (chamado pelo Claude Code)
-  claude-history mcp-install [--force]  registra em ~/.claude/settings.json mcpServers
+  nessy mcp                    sobe MCP server em stdio (chamado pelo Claude Code)
+  nessy mcp-install [--force]  registra em ~/.claude/settings.json mcpServers
                   [--uninstall]
 
 EXAMPLES:
-  claude-history list
-  claude-history list --json | jq '.[] | select(.git_branch == "main")'
-  claude-history fzf
-  claude-history tui
+  nessy list
+  nessy list --json | jq '.[] | select(.git_branch == "main")'
+  nessy fzf
+  nessy tui
 `
 
 func main() {
@@ -150,7 +151,7 @@ func cmdList(args []string) {
 
 func cmdShow(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history show <session-id>")
+		fmt.Fprintln(os.Stderr, "usage: nessy show <session-id>")
 		os.Exit(1)
 	}
 	id := args[0]
@@ -348,7 +349,7 @@ func cmdTui(args []string) {
 
 func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	home, _ := os.UserHomeDir()
-	cacheDir := filepath.Join(home, ".claude-history")
+	cacheDir := branding.CacheDir()
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		fatal(err)
 	}
@@ -472,7 +473,7 @@ func cmdServe(args []string) {
 	}
 
 	home, _ := os.UserHomeDir()
-	cacheDir := filepath.Join(home, ".claude-history")
+	cacheDir := branding.CacheDir()
 	_ = os.MkdirAll(cacheDir, 0755)
 	dbPath := filepath.Join(cacheDir, "index.db")
 	pricingPath := filepath.Join(cacheDir, "pricing.toml")
@@ -603,14 +604,13 @@ func fatal(err error) {
 }
 
 // cmdStatuslineRender é o handler chamado pelo Claude Code via settings.json:
-//   { "statusLine": { "type": "command", "command": "claude-history statusline-render" } }
+//   { "statusLine": { "type": "command", "command": "nessy statusline-render" } }
 //
-// Lê o JSON do stdin, carrega ~/.claude-history/statusline.toml (ou default),
+// Lê o JSON do stdin, carrega ~/.nessy/statusline.toml (ou default),
 // renderiza, escreve uma linha em stdout. Falha silenciosa em qualquer erro
 // pra não quebrar o terminal do user.
 func cmdStatuslineRender() {
-	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	cfgPath := filepath.Join(branding.CacheDir(), "statusline.toml")
 	cfg, err := statusline.LoadConfig(cfgPath)
 	if err != nil {
 		// silencia — statusline não deve nunca quebrar a UX do Claude Code.
@@ -628,7 +628,7 @@ func cmdStatuslineRender() {
 }
 
 // cmdStatuslineInstall escreve a entrada statusLine no settings.json e cria
-// o config TOML default em ~/.claude-history/statusline.toml.
+// o config TOML default em ~/.nessy/statusline.toml.
 //
 // Flags:
 //   --preset <name>      compact | max | powerline (default compact)
@@ -689,7 +689,7 @@ func cmdStatuslineInstall(args []string) {
 	cmd := self + " statusline-render"
 
 	// Escreve config TOML default se não existir
-	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	cfgPath := filepath.Join(branding.CacheDir(), "statusline.toml")
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		cfg := statusline.Presets[preset]
 		if cfg == nil {
@@ -725,7 +725,7 @@ func cmdStatuslineInstall(args []string) {
 	}
 	fmt.Println()
 	fmt.Println("Próximos passos:")
-	fmt.Println("  1. Suba o daemon (em outra aba):  claude-history serve --no-open")
+	fmt.Println("  1. Suba o daemon (em outra aba):  nessy serve --no-open")
 	fmt.Println("  2. Reinicie o Claude Code         (statusLine só carrega no boot)")
 	fmt.Println("  3. Edite o config em:             " + cfgPath)
 }
@@ -759,8 +759,7 @@ func cmdStatuslinePreview(args []string) {
 	}
 
 	mock := mockInput()
-	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".claude-history", "statusline.toml")
+	cfgPath := filepath.Join(branding.CacheDir(), "statusline.toml")
 	cfg, _ := statusline.LoadConfig(cfgPath)
 
 	if all {

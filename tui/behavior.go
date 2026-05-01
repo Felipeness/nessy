@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
-	"github.com/felipeness/claude-history/internal/stats"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/stats"
 )
 
 type behaviorView struct {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 // ChatMsg é uma mensagem da conversa user↔Ness IA. Espelha o shape do Ollama

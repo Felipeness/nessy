@@ -7,8 +7,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 // nessView é o tab "Ness IA" — chat com RAG sobre as sessions. Mantém

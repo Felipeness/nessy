@@ -8,9 +8,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // searchMode espelha os 4 modos do backend HTTP. Default é hybrid.

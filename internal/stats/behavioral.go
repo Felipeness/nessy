@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 var wordRe = regexp.MustCompile(`(?i)\b[\p{L}]+\b`)

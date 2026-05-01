@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 	_ "modernc.org/sqlite"
 )
 

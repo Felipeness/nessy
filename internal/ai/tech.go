@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 // TechMention é uma tecnologia detectada com count de menções.

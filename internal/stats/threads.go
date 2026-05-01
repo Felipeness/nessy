@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 // Thread é um grupo de sessions consecutivas no mesmo project+branch dentro

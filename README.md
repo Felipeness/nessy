@@ -1,4 +1,4 @@
-# claude-history
+# Nessy
 
 > Indexa, busca, analisa e dá feedback sobre **todas** as suas conversas do Claude Code num só lugar — local, rápido, e sem mandar nada pro cloud.
 
@@ -20,14 +20,14 @@
 
 ## É pra isso que existe
 
-claude-history é um binário Go local que lê seus `~/.claude/projects/*.jsonl`, indexa tudo num SQLite, e te dá **4 jeitos** de explorar:
+Nessy é um binário Go local que lê seus `~/.claude/projects/*.jsonl`, indexa tudo num SQLite, e te dá **4 jeitos** de explorar:
 
 | Frontend | Como roda | Pra que serve |
 |---|---|---|
-| **TUI** | `claude-history tui` | Exploração diária no terminal — 10 abas, atalhos vim, layout adaptativo |
-| **Web Studio** | `claude-history serve` | Dashboards visuais, charts, statusline editor drag-drop |
-| **CLI** | `claude-history list/search/ask/...` | Scripting, pipes, integração shell — JSON-first |
-| **MCP server** | `claude-history mcp-install` | Outros Claudes consultam tua história enquanto te ajudam |
+| **TUI** | `nessy tui` | Exploração diária no terminal — 10 abas, atalhos vim, layout adaptativo |
+| **Web Studio** | `nessy serve` | Dashboards visuais, charts, statusline editor drag-drop |
+| **CLI** | `nessy list/search/ask/...` | Scripting, pipes, integração shell — JSON-first |
+| **MCP server** | `nessy mcp-install` | Outros Claudes consultam tua história enquanto te ajudam |
 
 ---
 
@@ -45,7 +45,7 @@ claude-history é um binário Go local que lê seus `~/.claude/projects/*.jsonl`
 
 🌳 **Visualiza threads e sub-agentes** — sessions de 78h não são uma bolha; são threads que se ramificam. Vê hierarquia projeto → branch → sub-agente, com badge `↳92 subs` quando uma session disparou 92 sub-agentes em paralelo. 6 visualizações: tree, cards, miller, graph DAG, timeline, galaxy (force-directed em Braille).
 
-📝 **Standup automático** — `claude-history standup --since 7d` cospe markdown formatado com Concluído/Decisões/Em aberto pronto pra colar no Slack.
+📝 **Standup automático** — `nessy standup --since 7d` cospe markdown formatado com Concluído/Decisões/Em aberto pronto pra colar no Slack.
 
 📍 **Statusline live no Claude Code** — `~/Desktop/repo │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m` — mostra contexto, cost da session, burn rate em tempo real. Editor visual no Studio (5 themes, 3 styles, drag-drop).
 
@@ -57,41 +57,41 @@ A interface mais poderosa pra script + uso diário. Todos os comandos retornam h
 
 ```bash
 # 🔍 Encontrar sessions
-claude-history list                           # tabela colorida
-claude-history fzf                            # fzf interativo, Enter retoma a session
-claude-history search "auth middleware"       # busca híbrida (BM25 + dense + metadata)
-claude-history search "docker" --mode body    # só dentro do body das mensagens
-claude-history similar "migrate to postgres"  # top 5 sessions semelhantes via embedding
+nessy list                           # tabela colorida
+nessy fzf                            # fzf interativo, Enter retoma a session
+nessy search "auth middleware"       # busca híbrida (BM25 + dense + metadata)
+nessy search "docker" --mode body    # só dentro do body das mensagens
+nessy similar "migrate to postgres"  # top 5 sessions semelhantes via embedding
 
 # 🧠 Perguntar pro teu histórico (RAG com Ollama)
-claude-history ask "como resolvi o bug de auth no NestJS?"
+nessy ask "como resolvi o bug de auth no NestJS?"
 # → "Você usou um guard customizado validando JWT em 3 camadas... [6df22c8d]"
 # → fontes listadas com session_id + similarity %
 
 # 📊 Análise
-claude-history insights --type token_waste            # advisor — onde tá queimando token
-claude-history knowledge 6df22c8d                     # tudo que extraiu de 1 session
-claude-history aggregated                             # cross-session: padrões, decisões, em aberto
-claude-history project ~/Desktop/Projects/foo         # stats do projeto: p90, tech, top tools
-claude-history show 6df22c8d                          # detalhes brutos de 1 session
+nessy insights --type token_waste            # advisor — onde tá queimando token
+nessy knowledge 6df22c8d                     # tudo que extraiu de 1 session
+nessy aggregated                             # cross-session: padrões, decisões, em aberto
+nessy project ~/Desktop/Projects/foo         # stats do projeto: p90, tech, top tools
+nessy show 6df22c8d                          # detalhes brutos de 1 session
 
 # 📝 Standup pra colar no Slack
-claude-history standup --since 7d                     # editorial (Concluído/Decisões/Em aberto)
-claude-history standup --since 7d --format timeline   # cronológico
-claude-history standup --since 14d --format project   # agrupado por projeto + custo
+nessy standup --since 7d                     # editorial (Concluído/Decisões/Em aberto)
+nessy standup --since 7d --format timeline   # cronológico
+nessy standup --since 14d --format project   # agrupado por projeto + custo
 
 # 📍 Statusline + integrações
-claude-history statusline-install --preset compact    # liga no Claude Code
-claude-history statusline-preview --all               # 5 themes × 3 styles no terminal
-claude-history mcp-install                            # registra MCP server pra outros Claudes
-claude-history serve --no-open                        # sobe Studio web em :5555
+nessy statusline-install --preset compact    # liga no Claude Code
+nessy statusline-preview --all               # 5 themes × 3 styles no terminal
+nessy mcp-install                            # registra MCP server pra outros Claudes
+nessy serve --no-open                        # sobe Studio web em :5555
 ```
 
 **Use case matador**: Claude consultando seu próprio histórico mid-session.
 
 ```bash
 # No meio de outra session do Claude Code, ele roda via Bash:
-claude-history ask "como resolvi auth bug 3 meses atrás?" --json
+nessy ask "como resolvi auth bug 3 meses atrás?" --json
 # → ele recebe contexto rico citando session_ids reais, sem precisar reexplicar tudo
 ```
 
@@ -99,13 +99,13 @@ Pipe-friendly:
 
 ```bash
 # Todas as sessions com cost > $5 dos últimos 7 dias, ordem cronológica
-claude-history search ":all" --json | jq '.[] | select(.cost_usd > 5)'
+nessy search ":all" --json | jq '.[] | select(.cost_usd > 5)'
 
 # Open questions em aberto agora
-claude-history aggregated --json | jq '.open_questions[]'
+nessy aggregated --json | jq '.open_questions[]'
 
 # Cost da semana por projeto
-claude-history standup --since 7d --format project
+nessy standup --since 7d --format project
 ```
 
 ## Instalação
@@ -113,10 +113,10 @@ claude-history standup --since 7d --format project
 ### 1. Build
 
 ```bash
-git clone git@github.com:Felipeness/claude-history ~/Desktop/Projects/claude-history
-cd ~/Desktop/Projects/claude-history
+git clone git@github.com:Felipeness/nessy ~/Desktop/Projects/nessy
+cd ~/Desktop/Projects/nessy
 cd web && bun install && bun run build && cd ..
-go build -o ~/.local/bin/claude-history .
+go build -o ~/.local/bin/nessy .
 ```
 
 Garante que `~/.local/bin` está no seu PATH. Bun é necessário só pra buildar o frontend uma vez (depois fica embedded no binário Go).
@@ -126,7 +126,7 @@ Garante que `~/.local/bin` está no seu PATH. Bun é necessário só pra buildar
 Necessário pra Web UI, statusline live (cost/p90/burn-rate) e SSE updates:
 
 ```bash
-claude-history serve --no-open    # http://localhost:5555
+nessy serve --no-open    # http://localhost:5555
 ```
 
 Roda em foreground. Pra deixar sempre ativo no boot via launchd, veja [Daemon persistente](#daemon-persistente) abaixo.
@@ -134,26 +134,26 @@ Roda em foreground. Pra deixar sempre ativo no boot via launchd, veja [Daemon pe
 ### 3. Plugar o statusline no Claude Code (opcional mas recomendado)
 
 ```bash
-claude-history statusline-install --preset compact
+nessy statusline-install --preset compact
 # Se você já tem outro statusline (ccstatusline, etc) instalado:
-claude-history statusline-install --preset compact --force
+nessy statusline-install --preset compact --force
 ```
 
 Isso:
 - Cria backup automático: `~/.claude/settings.json.bak.YYYYMMDD-HHMMSS`
 - Faz merge atômico no `~/.claude/settings.json` — preserva `permissions`, `hooks`, e qualquer outra key que já exista
-- Escreve `~/.claude-history/statusline.toml` com o preset escolhido
+- Escreve `~/.nessy/statusline.toml` com o preset escolhido
 - Sem `--force`, recusa se já existe `statusLine` apontando pra outro tool
 
 Depois **reinicia o Claude Code** — o `statusLine` só carrega no boot. Pronto, vai aparecer assim no terminal:
 
 ```
-~/Desktop/Projects/claude-history │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m
+~/Desktop/Projects/nessy │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m
 ```
 
 ### 4. Customizar o statusline visualmente
 
-Abra `http://localhost:5555/#studio` no browser — drag-drop dos components, escolha de tema (graphite/nord/dracula/sakura/mono), 3 styles (plain/powerline/capsule), thresholds (warn/critical) por component, mock data pra simular cenários. Salvar persiste em `~/.claude-history/statusline.toml`.
+Abra `http://localhost:5555/#studio` no browser — drag-drop dos components, escolha de tema (graphite/nord/dracula/sakura/mono), 3 styles (plain/powerline/capsule), thresholds (warn/critical) por component, mock data pra simular cenários. Salvar persiste em `~/.nessy/statusline.toml`.
 
 Ou edite o TOML direto:
 
@@ -179,7 +179,7 @@ Reinicia o Claude Code pra aplicar (não tem hot-reload do config — Claude Cod
 ### Desinstalar o statusline
 
 ```bash
-claude-history statusline-install --uninstall
+nessy statusline-install --uninstall
 # OU restaurar do backup:
 cp ~/.claude/settings.json.bak.YYYYMMDD-HHMMSS ~/.claude/settings.json
 ```
@@ -196,29 +196,29 @@ Sem isso a tab AI fica vazia, mas todo o resto (statusline, TUI, costs) funciona
 
 ### Daemon persistente
 
-Pra `claude-history serve` rodar sempre no login (assim o statusline sempre tem dados), crie `~/Library/LaunchAgents/com.claude-history.plist`:
+Pra `nessy serve` rodar sempre no login (assim o statusline sempre tem dados), crie `~/Library/LaunchAgents/com.nessy.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key><string>com.claude-history</string>
+    <key>Label</key><string>com.nessy</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/SEU_USER/.local/bin/claude-history</string>
+        <string>/Users/SEU_USER/.local/bin/nessy</string>
         <string>serve</string>
         <string>--no-open</string>
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/claude-history.log</string>
-    <key>StandardErrorPath</key><string>/tmp/claude-history.err</string>
+    <key>StandardOutPath</key><string>/tmp/nessy.log</string>
+    <key>StandardErrorPath</key><string>/tmp/nessy.err</string>
 </dict>
 </plist>
 ```
 
-Ativa: `launchctl load ~/Library/LaunchAgents/com.claude-history.plist`
+Ativa: `launchctl load ~/Library/LaunchAgents/com.nessy.plist`
 
 ## Visão geral das fases
 
@@ -253,26 +253,26 @@ Falhas graceful: se Ollama estiver down, retornam JSON com `{"error": "..."}` ao
 **Claude consultando seu próprio histórico mid-session** (o killer use case):
 ```bash
 # No meio de outra session do Claude Code, ele pode rodar via Bash:
-claude-history ask "como resolvi auth bug 3 meses atrás?" --json
+nessy ask "como resolvi auth bug 3 meses atrás?" --json
 # → contexto rico citando session_ids reais
 ```
 
 **Standup automatizado**:
 ```bash
-claude-history standup --since 7d | pbcopy
+nessy standup --since 7d | pbcopy
 # cola no Slack/daily
 ```
 
 **CI/CD insight check**:
 ```bash
 # script verifica se há open questions críticas em aberto
-COUNT=$(claude-history aggregated --json | jq '.open_questions | length')
+COUNT=$(nessy aggregated --json | jq '.open_questions | length')
 [ "$COUNT" -gt 5 ] && echo "⚠ $COUNT pendências"
 ```
 
 **Drill-down num projeto antes de decidir refactor**:
 ```bash
-claude-history project ~/projects/my-app --json | jq '.tech_stack, .top_tools'
+nessy project ~/projects/my-app --json | jq '.tech_stack, .top_tools'
 ```
 
 ## TUI
@@ -306,7 +306,7 @@ claude-history project ~/projects/my-app --json | jq '.tech_stack, .top_tools'
 ## Web UI
 
 ```bash
-claude-history serve --no-open
+nessy serve --no-open
 # abre em http://localhost:5555
 ```
 
@@ -328,27 +328,27 @@ ollama pull nomic-embed-text     # embeddings (clusters, similarity)
 ollama serve
 ```
 
-Sem internet — tudo roda local. O claude-history gera (sob demanda):
+Sem internet — tudo roda local. O.nessy gera (sob demanda):
 
 - **Summaries** — 1 parágrafo por session, cacheado por mtime do JSONL
 - **Clusters** — K-means sobre embeddings, com label gerado por LLM (ex: "auth-refactor", "config-tweaks")
 - **Similar** — top-N sessions com cosine similarity à atual
 - **Insights** — advisor que detecta `repeated_task`, `chronic_problem`, `script_opportunity`, `token_waste`, `performance_hint`, `anti_pattern`, `personal_pattern`. Cada um com evidência concreta (session ids) e ação sugerida.
-- **Profile** — perfil pessoal em pt-BR gerado a partir de summaries + tech detectada (regex sobre msgs) + insights. Honra `~/.claude-history/about.txt` como ground truth pra identidade.
+- **Profile** — perfil pessoal em pt-BR gerado a partir de summaries + tech detectada (regex sobre msgs) + insights. Honra `~/.nessy/about.txt` como ground truth pra identidade.
 
 ## Statusline (Fase 6)
 
-Binário `claude-history statusline-render` que o Claude Code chama via stdin a cada turno. Recebe um JSON com `cwd`, `model`, `context_window`, `cost`, `rate_limits`, `worktree`, etc., consulta o daemon claude-history pra dados históricos (p90, daily, project, cluster) com timeout 80ms, e devolve uma linha ANSI colorida.
+Binário `nessy statusline-render` que o Claude Code chama via stdin a cada turno. Recebe um JSON com `cwd`, `model`, `context_window`, `cost`, `rate_limits`, `worktree`, etc., consulta o daemon.nessy pra dados históricos (p90, daily, project, cluster) com timeout 80ms, e devolve uma linha ANSI colorida.
 
 ### Setup
 
 ```bash
-claude-history serve --no-open    # daemon roda em :5555 com cache 5s
-claude-history statusline-install --preset compact
+nessy serve --no-open    # daemon roda em :5555 com cache 5s
+nessy statusline-install --preset compact
 # reinicia o Claude Code (statusLine só carrega no boot)
 ```
 
-`statusline-install` faz: backup de `~/.claude/settings.json`, merge atômico só na chave `statusLine` (preserva `permissions`, `hooks`, etc.), escreve config TOML default em `~/.claude-history/statusline.toml`. `--uninstall` reverte.
+`statusline-install` faz: backup de `~/.claude/settings.json`, merge atômico só na chave `statusLine` (preserva `permissions`, `hooks`, etc.), escreve config TOML default em `~/.nessy/statusline.toml`. `--uninstall` reverte.
 
 ### 16 components disponíveis
 
@@ -413,7 +413,7 @@ Editor visual do statusline. **Single source of truth**: o engine de render é e
   - `⚙` em chips com `has_warn_at` abre editor de threshold (warn_at / critical_at)
   - `×` remove
 - **Resetar pra preset** — `↺ compact`, `↺ max`, `↺ powerline`
-- **Salvar** — POST `/api/statusline/config` → grava em `~/.claude-history/statusline.toml`
+- **Salvar** — POST `/api/statusline/config` → grava em `~/.nessy/statusline.toml`
 
 ### Painel direito
 
@@ -430,11 +430,11 @@ Cada sessão do Claude Code vira um `.jsonl` em `~/.claude/projects/<encoded-cwd
 
 O parser faz uma única passada streaming por arquivo, extrai metadados (sessionId, cwd, branch, msgs, tools, **tokens do `usage` field**, modelo) — sub-agents (`subagents/*.jsonl`) são ignorados pra não duplicar.
 
-Cache SQLite (`~/.claude-history/index.db`) com FTS5 pra busca textual. Reindex incremental via `mtime`. Primeiro launch ~2-5s pra ~100 sessions, subsequentes ~50ms.
+Cache SQLite (`~/.nessy/index.db`) com FTS5 pra busca textual. Reindex incremental via `mtime`. Primeiro launch ~2-5s pra ~100 sessions, subsequentes ~50ms.
 
 ## Configuração
 
-Diretório de runtime: `~/.claude-history/`
+Diretório de runtime: `~/.nessy/`
 
 | Arquivo | Pra que serve |
 |---|---|
@@ -501,7 +501,7 @@ POST /api/statusline/render                         # {config, mock_input, mock_
 ## Arquitetura
 
 ```
-claude-history/
+nessy/
 ├── main.go                            # router de subcomandos
 ├── embed.go                           # //go:embed all:web/dist
 ├── internal/
@@ -563,7 +563,7 @@ claude-history/
 ## Privacidade
 
 Tudo roda local. Nada sai da sua máquina:
-- Index e cache no `~/.claude-history/`
+- Index e cache no `~/.nessy/`
 - AI via Ollama localhost
 - Web UI bind padrão `127.0.0.1:5555` (warning explícito se você passar `--listen 0.0.0.0`)
 - Statusline endpoint cacheia 5s, não loga conteúdo

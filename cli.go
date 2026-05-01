@@ -18,12 +18,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/config"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/branding"
+	"github.com/felipeness/nessy/internal/config"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // cliCtx carrega tudo que os subcomandos novos precisam — DB, pricing, config,
@@ -38,13 +39,13 @@ type cliCtx struct {
 }
 
 // loadCLICtx abre DB, pricing e config. Não inicia daemon nem worker.
-// Reusa caminhos padrão de ~/.claude-history/.
+// Reusa caminhos padrão de ~/.nessy/.
 func loadCLICtx(noAI bool) (*cliCtx, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	cacheDir := filepath.Join(home, ".claude-history")
+	cacheDir := branding.CacheDir()
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return nil, err
 	}
@@ -128,7 +129,7 @@ func parseFlags(args []string, knownBool map[string]bool) (flags map[string]stri
 func cmdSimilar(args []string) {
 	flags, positional := parseFlags(args, map[string]bool{"json": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history similar <query> [--n 5] [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy similar <query> [--n 5] [--json]")
 		os.Exit(1)
 	}
 	query := strings.Join(positional, " ")
@@ -229,7 +230,7 @@ func cmdSimilar(args []string) {
 func cmdSearchCLI(args []string) {
 	flags, positional := parseFlags(args, map[string]bool{"json": true, "all": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history search <query> [--mode hybrid|body|meta|sim] [--all] [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy search <query> [--mode hybrid|body|meta|sim] [--all] [--json]")
 		os.Exit(1)
 	}
 	query := strings.Join(positional, " ")
@@ -349,7 +350,7 @@ func searchFTSCli(db *index.DB, q string, sessions []*model.Session, all bool) [
 func cmdAsk(args []string) {
 	flags, positional := parseFlags(args, map[string]bool{"json": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history ask <question> [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy ask <question> [--json]")
 		os.Exit(1)
 	}
 	question := strings.Join(positional, " ")
@@ -440,7 +441,7 @@ func cmdInsightsCLI(args []string) {
 func cmdKnowledgeCLI(args []string) {
 	flags, positional := parseFlags(args, map[string]bool{"json": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history knowledge <session_id> [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy knowledge <session_id> [--json]")
 		os.Exit(1)
 	}
 	id := positional[0]
@@ -464,7 +465,7 @@ func cmdKnowledgeCLI(args []string) {
 	k, err := ctx.db.KnowledgeGet(full)
 	if err != nil {
 		if asJSON {
-			emitJSONError("not generated yet — run `claude-history` and gen knowledge")
+			emitJSONError("not generated yet — run `nessy` and gen knowledge")
 		} else {
 			fmt.Fprintln(os.Stderr, "knowledge not generated for", id)
 		}
@@ -590,7 +591,7 @@ var ticketBranchRECLI = regexp.MustCompile(`([A-Z]{2,8}-\d{1,6})`)
 func cmdProjectCLI(args []string) {
 	flags, positional := parseFlags(args, map[string]bool{"json": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: claude-history project <path> [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy project <path> [--json]")
 		os.Exit(1)
 	}
 	path := positional[0]

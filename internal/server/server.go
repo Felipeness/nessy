@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // Server agrega backend state pra os handlers.

@@ -156,7 +156,7 @@ export function AITab({ reindexCounter }: Props) {
         <div className="bg-[#161b22] rounded p-6 border border-[#30363d] max-w-2xl">
           <h2 className="text-xl font-bold mb-2">🤖 AI desabilitada</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Ative em <code className="bg-[#0d1117] px-1 rounded">~/.claude-history/config.toml</code>:
+            Ative em <code className="bg-[#0d1117] px-1 rounded">~/.nessy/config.toml</code>:
           </p>
           <pre className="bg-[#0d1117] p-3 rounded text-xs overflow-auto">
             {`[ai]\nenabled = true\nollama_url = "http://localhost:11434"\ngen_model = "qwen2.5:7b"\nembed_model = "nomic-embed-text"`}

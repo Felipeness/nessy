@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 const defaultK = 10

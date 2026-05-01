@@ -12,11 +12,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/config"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/config"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 type tabID int
@@ -644,7 +644,7 @@ func (m Model) renderStatusBar() string {
 }
 
 func helpText() string {
-	return `KEYBINDS — claude-history TUI
+	return `KEYBINDS — Nessy TUI
 
 NAVEGAÇÃO ENTRE TABS
   Tab / Shift+Tab    próxima/anterior tab

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/stats"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/stats"
 )
 
 const insightsPromptPT = `Você é um advisor analisando o histórico de uso de Claude Code de um dev brasileiro.

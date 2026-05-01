@@ -255,7 +255,7 @@ function SearchHelp() {
           <li><code>:body decoder bug</code> — só FTS5 (sem metadata)</li>
           <li><code>:sim error handling pattern</code> — semantic via embeddings</li>
           <li><code>cost:&gt;5 since:7d</code> — sessions caras dos últimos 7 dias</li>
-          <li><code>project:claude-history fts5</code> — só no projeto X</li>
+          <li><code>project:nessy fts5</code> — só no projeto X</li>
           <li><code>branch:feat/CC-1234</code> — todas sessions desse ticket</li>
         </ul>
       </div>

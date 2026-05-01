@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
-	"github.com/felipeness/claude-history/internal/stats"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/stats"
 )
 
 // statuslineCache cacheia respostas de /api/statusline por session+project.

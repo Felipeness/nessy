@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 func TestOpen_createsSchema(t *testing.T) {

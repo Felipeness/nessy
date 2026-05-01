@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/ai"
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/mcp"
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/ai"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/mcp"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 // registerTools registra as 8 tools no server MCP. Cada handler abre o DB
@@ -25,7 +25,7 @@ import (
 // requests são curtos e independentes.
 func registerTools(s *mcp.Server) {
 	s.Register(mcp.Tool{
-		Name: "claude_history_similar",
+		Name: "nessy_similar",
 		Description: "Find past Claude Code sessions semantically similar to a query, " +
 			"ranked by embedding cosine similarity. Returns top-N (default 5) with " +
 			"session_id, summary (1-line), project_dir, branch, and similarity score 0-1.\n\n" +
@@ -34,8 +34,8 @@ func registerTools(s *mcp.Server) {
 			"Useful pre-flight check before big refactors or debugging.\n\n" +
 			"EXAMPLE: query='migrate sqlite to postgres' → returns 5 sessions about DB migrations " +
 			"with scores 0.7-0.9.\n\n" +
-			"DO NOT USE for: keyword/literal search (use claude_history_search instead), or " +
-			"questions needing synthesis across sessions (use claude_history_ask). Returns " +
+			"DO NOT USE for: keyword/literal search (use nessy_search instead), or " +
+			"questions needing synthesis across sessions (use nessy_ask). Returns " +
 			"empty if AI features disabled (no embeddings indexed).",
 		InputSchema: schemaObject(map[string]any{
 			"query": schemaString("Natural-language description of the task or topic. Sentences work better than keywords."),
@@ -44,19 +44,19 @@ func registerTools(s *mcp.Server) {
 	}, handleSimilar)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_search",
+		Name: "nessy_search",
 		Description: "Keyword/filter search over Claude Code session metadata + message bodies. " +
 			"Returns sessions matching the query with first_msg, project, branch, model, cost, " +
-			"start_time. Supports filters inline: 'project:claude-history', 'branch:feat/CC-1234', " +
+			"start_time. Supports filters inline: 'project:nessy', 'branch:feat/CC-1234', " +
 			"'since:7d', 'cost:>1', 'msgs:>100'.\n\n" +
 			"MODES: 'hybrid' (default, metadata+FTS5), 'body' (only message text via FTS5), " +
 			"'meta' (only project/branch/first_msg fields), 'sim' (semantic via embeddings — " +
-			"prefer claude_history_similar for that).\n\n" +
+			"prefer nessy_similar for that).\n\n" +
 			"USE WHEN: user has specific keywords/filters in mind ('find sessions on the auth " +
 			"refactor branch from last week with cost > $5'). Faster and more precise than " +
 			"semantic for literal terms.\n\n" +
-			"DO NOT USE for: vague conceptual queries (use claude_history_similar), or for " +
-			"questions needing answers/synthesis (use claude_history_ask).",
+			"DO NOT USE for: vague conceptual queries (use nessy_similar), or for " +
+			"questions needing answers/synthesis (use nessy_ask).",
 		InputSchema: schemaObject(map[string]any{
 			"query": schemaString("Keywords + optional inline filters: 'project:X branch:Y since:7d cost:>1 msgs:>100'."),
 			"mode":  schemaStringEnum("Search mode (default 'hybrid')", []string{"hybrid", "body", "meta", "sim"}, "hybrid"),
@@ -64,7 +64,7 @@ func registerTools(s *mcp.Server) {
 	}, handleSearchTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_ask",
+		Name: "nessy_ask",
 		Description: "RAG-powered Q&A over the user's entire Claude Code history. Uses " +
 			"extracted knowledge (decisions, learnings, code patterns) + embeddings to " +
 			"answer in natural language with [session_id] citations.\n\n" +
@@ -81,7 +81,7 @@ func registerTools(s *mcp.Server) {
 	}, handleAskTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_insights",
+		Name: "nessy_insights",
 		Description: "Surface AI-generated insights about the user's coding patterns. Each " +
 			"insight has type, title, description, evidence (session_ids), and suggested action.\n\n" +
 			"INSIGHT TYPES:\n" +
@@ -104,17 +104,17 @@ func registerTools(s *mcp.Server) {
 	}, handleInsightsTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_knowledge",
+		Name: "nessy_knowledge",
 		Description: "Get the AI-extracted structured knowledge from ONE specific session. " +
 			"Returns: problem statement, solution, decisions (each with rationale), learnings " +
 			"(takeaways), code_patterns (reusable techniques), tech_used (libs/tools), " +
 			"open_questions (loose ends).\n\n" +
 			"USE WHEN: drilling into a session you already know the ID of, often after using " +
-			"claude_history_search or claude_history_similar to find candidates. Examples: " +
+			"nessy_search or nessy_similar to find candidates. Examples: " +
 			"'tell me what I learned in [abc12345]', 'what decisions were made in that " +
 			"session about caching?'.\n\n" +
 			"EXAMPLE: session_id='abc12345' → returns JSON with all 7 fields.\n\n" +
-			"DO NOT USE for: cross-session aggregates (use claude_history_aggregated), or " +
+			"DO NOT USE for: cross-session aggregates (use nessy_aggregated), or " +
 			"when you don't have a session_id yet. Returns empty if knowledge not extracted " +
 			"for this session (run TUI's [K] action first).",
 		InputSchema: schemaObject(map[string]any{
@@ -123,7 +123,7 @@ func registerTools(s *mcp.Server) {
 	}, handleKnowledgeTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_aggregated",
+		Name: "nessy_aggregated",
 		Description: "Cross-session aggregate of all extracted knowledge. Returns: top " +
 			"code_patterns (with frequency), decision_timeline (chronological), recurring " +
 			"problems (count + last_seen), tech frequency map, open_questions across all " +
@@ -132,14 +132,14 @@ func registerTools(s *mcp.Server) {
 			"are my open loose ends across all projects', 'what recurring problems keep " +
 			"coming up', 'show me my decision history'. Read-only summary, no per-session drill.\n\n" +
 			"No input parameters — operates on the entire history.\n\n" +
-			"DO NOT USE for: questions about a single session (use claude_history_knowledge), " +
-			"or when looking for specific text/keywords (use claude_history_search). Returns " +
+			"DO NOT USE for: questions about a single session (use nessy_knowledge), " +
+			"or when looking for specific text/keywords (use nessy_search). Returns " +
 			"empty arrays if no sessions have extracted knowledge yet.",
 		InputSchema: schemaObject(nil),
 	}, handleAggregatedTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_project",
+		Name: "nessy_project",
 		Description: "Profile a single project directory across all sessions that ran in " +
 			"it. Returns: session count, total cost, p90 cost/tokens (catch outliers), " +
 			"detected tech stack (langs/frameworks), top tools used (Bash/Edit/Read freq), " +
@@ -149,7 +149,7 @@ func registerTools(s *mcp.Server) {
 			"based on similar past work, or onboarding to an unfamiliar local project.\n\n" +
 			"EXAMPLE: path='/Users/me/work/auth-service' → returns 23 sessions, $45 total, " +
 			"p90=$3.20, tech=[Go, NestJS, Postgres], top tools=[Edit:120, Bash:80].\n\n" +
-			"DO NOT USE for: searching across projects (use claude_history_search). Path " +
+			"DO NOT USE for: searching across projects (use nessy_search). Path " +
 			"must be absolute and match the cwd recorded in sessions exactly.",
 		InputSchema: schemaObject(map[string]any{
 			"path": schemaString("Absolute project path — must match session cwd exactly (e.g. /Users/me/repo, not ~/repo)."),
@@ -157,7 +157,7 @@ func registerTools(s *mcp.Server) {
 	}, handleProjectTool)
 
 	s.Register(mcp.Tool{
-		Name: "claude_history_standup",
+		Name: "nessy_standup",
 		Description: "Generate a standup-style markdown summary of recent Claude Code work. " +
 			"Pre-formatted for daily/weekly reports.\n\n" +
 			"FORMATS:\n" +
@@ -169,8 +169,8 @@ func registerTools(s *mcp.Server) {
 			"editorial format is best for human reading; timeline is best for activity " +
 			"reconstruction; project is best when reporting per-client.\n\n" +
 			"EXAMPLE: since='7d', format='editorial' → markdown with last-week summary.\n\n" +
-			"DO NOT USE for: questions about specific sessions (use claude_history_ask) or " +
-			"raw lists (use claude_history_search). Default since='24h' if omitted.",
+			"DO NOT USE for: questions about specific sessions (use nessy_ask) or " +
+			"raw lists (use nessy_search). Default since='24h' if omitted.",
 		InputSchema: schemaObject(map[string]any{
 			"since":  schemaString("Time window like '7d', '24h', '30m', '14d'. Default '24h'."),
 			"format": schemaStringEnum("Output format (default 'editorial')", []string{"editorial", "timeline", "project"}, "editorial"),
@@ -396,7 +396,7 @@ func handleInsightsTool(ctx context.Context, raw json.RawMessage) (string, error
 		list = filtered
 	}
 	if len(list) == 0 {
-		return "No insights generated yet — run `claude-history` AI tab and click 'Generate insights'.", nil
+		return "No insights generated yet — run `nessy` AI tab and click 'Generate insights'.", nil
 	}
 	var b bytes.Buffer
 	for _, i := range list {
@@ -651,7 +651,7 @@ func dumpJSONListMCP(b *bytes.Buffer, label, raw string, structured bool) {
 
 // cmdMCPServe é o subcomando "mcp" — sobe servidor MCP em stdio.
 func cmdMCPServe() {
-	srv := mcp.NewServer("claude-history", "0.1.0")
+	srv := mcp.NewServer("nessy", "0.1.0")
 	registerTools(srv)
 	if err := srv.Run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, "mcp server error:", err)
@@ -659,7 +659,7 @@ func cmdMCPServe() {
 	}
 }
 
-// cmdMCPInstall escreve a entrada mcpServers.claude-history em settings.json.
+// cmdMCPInstall escreve a entrada mcpServers.nessy em settings.json.
 func cmdMCPInstall(args []string) {
 	force := false
 	uninstall := false
@@ -677,15 +677,15 @@ func cmdMCPInstall(args []string) {
 	}
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	if uninstall {
-		removed, backup, err := mcp.Uninstall(settingsPath, "claude-history")
+		removed, backup, err := mcp.Uninstall(settingsPath, "nessy")
 		if err != nil {
 			fatal(err)
 		}
 		if !removed {
-			fmt.Println("settings.json não tinha mcpServers.claude-history — nada a remover")
+			fmt.Println("settings.json não tinha mcpServers.nessy — nada a remover")
 			return
 		}
-		fmt.Printf("✓ mcpServers.claude-history removido de %s\n  backup: %s\n", settingsPath, backup)
+		fmt.Printf("✓ mcpServers.nessy removido de %s\n  backup: %s\n", settingsPath, backup)
 		return
 	}
 	self, err := os.Executable()
@@ -694,7 +694,7 @@ func cmdMCPInstall(args []string) {
 	}
 	res, err := mcp.Install(mcp.InstallOptions{
 		SettingsPath: settingsPath,
-		Name:         "claude-history",
+		Name:         "nessy",
 		Command:      self,
 		Args:         []string{"mcp"},
 		Force:        force,
@@ -706,9 +706,9 @@ func cmdMCPInstall(args []string) {
 		fmt.Printf("✓ backup: %s\n", res.Backup)
 	}
 	if res.Replaced {
-		fmt.Println("⚠ mcpServers.claude-history anterior foi sobrescrito")
+		fmt.Println("⚠ mcpServers.nessy anterior foi sobrescrito")
 	}
 	fmt.Printf("✓ MCP server instalado em %s\n  command: %s mcp\n", settingsPath, self)
 	fmt.Println("\nPróximo passo: reinicia o Claude Code (mcpServers só carrega no boot).")
-	fmt.Println("As 8 tools 'claude_history_*' vão aparecer auto-discovered.")
+	fmt.Println("As 8 tools 'nessy_*' vão aparecer auto-discovered.")
 }

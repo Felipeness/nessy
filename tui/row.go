@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // formatDenseRow renderiza uma linha de session no formato denso:

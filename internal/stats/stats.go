@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 // Baseline retorna mediana de msgs/cost/duration nas últimas 30 sessions do projeto.

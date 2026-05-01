@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"strings"
 
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 const summaryPromptPT = `Resuma a conversa abaixo entre um dev e Claude Code em UMA frase de no máximo 20 palavras, em português brasileiro, focando no que foi feito (não no que foi discutido). Não use markdown nem bullet points, só texto puro numa única linha.

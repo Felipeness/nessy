@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 // EventBroadcaster é uma interface mínima de hub SSE pra desacoplar do server.

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 func TestLoadAndCalculate(t *testing.T) {

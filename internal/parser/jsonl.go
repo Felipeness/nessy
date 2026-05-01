@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 // Session is an alias for model.Session, kept for backwards-compat with callers.

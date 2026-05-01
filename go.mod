@@ -1,4 +1,4 @@
-module github.com/felipeness/claude-history
+module github.com/felipeness/nessy
 
 go 1.26.2
 

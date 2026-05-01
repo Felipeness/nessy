@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/nessy/internal/branding"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/pricing"
 )
 
 type exportDoneMsg struct {
@@ -28,8 +29,7 @@ type exportCost struct {
 
 func exportCmd(s *model.Session, p *pricing.Pricing) tea.Cmd {
 	return func() tea.Msg {
-		home, _ := os.UserHomeDir()
-		dir := filepath.Join(home, ".claude-history", "exports")
+		dir := filepath.Join(branding.CacheDir(), "exports")
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return exportDoneMsg{err: err}
 		}

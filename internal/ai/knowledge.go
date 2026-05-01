@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
-	"github.com/felipeness/claude-history/internal/model"
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/index"
+	"github.com/felipeness/nessy/internal/model"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 // knowledgePromptPT é o prompt que extrai o "segundo cérebro" — problema,

@@ -4,7 +4,7 @@ package pricing
 
 import (
 	"github.com/BurntSushi/toml"
-	"github.com/felipeness/claude-history/internal/model"
+	"github.com/felipeness/nessy/internal/model"
 )
 
 // Model mapeia o pricing de um único modelo (preços por 1M tokens).

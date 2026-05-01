@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/felipeness/claude-history/internal/index"
+	"github.com/felipeness/nessy/internal/index"
 )
 
 // KnowledgeAggregate é a visão cross-session — agrega tudo em session_knowledge

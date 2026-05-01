@@ -3,10 +3,10 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 
-	"github.com/felipeness/claude-history/internal/statusline"
+	"github.com/felipeness/nessy/internal/branding"
+	"github.com/felipeness/nessy/internal/statusline"
 )
 
 // Studio endpoints — alimentam o tab "Statusline Studio" do Web UI:
@@ -93,8 +93,7 @@ func (s *Server) handleStatuslineThemes(w http.ResponseWriter, r *http.Request) 
 }
 
 func statuslineConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude-history", "statusline.toml")
+	return filepath.Join(branding.CacheDir(), "statusline.toml")
 }
 
 func (s *Server) handleStatuslineConfig(w http.ResponseWriter, r *http.Request) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/felipeness/claude-history/internal/parser"
+	"github.com/felipeness/nessy/internal/parser"
 )
 
 // ReindexStats reports counts from a reindex pass.
