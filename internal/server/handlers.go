@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felipeness/nessy/internal/advisor"
 	"github.com/felipeness/nessy/internal/ai"
 	"github.com/felipeness/nessy/internal/index"
 	"github.com/felipeness/nessy/internal/model"
@@ -23,6 +24,7 @@ import (
 
 func registerAPI(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("/api/meta", s.handleMeta)
+	mux.HandleFunc("/api/advise", s.handleAdvise)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionByID) // /api/sessions/<id> + /api/sessions/<id>/messages
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -794,6 +796,25 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, resp)
+}
+
+// handleAdvise devolve recomendações deterministas do advisor.
+// GET /api/advise — sem params. Lazy: sempre re-roda (queries são leves).
+func (s *Server) handleAdvise(w http.ResponseWriter, r *http.Request) {
+	all, err := s.sessionsAll()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	recs, err := advisor.Run(s.DB, s.Pricing, all)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"recommendations": recs,
+		"count":           len(recs),
+	})
 }
 
 // handleSearch suporta 4 modos:

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felipeness/nessy/internal/advisor"
 	"github.com/felipeness/nessy/internal/ai"
 	"github.com/felipeness/nessy/internal/branding"
 	"github.com/felipeness/nessy/internal/config"
@@ -968,3 +969,56 @@ func sqrtFCli(x float64) float64 {
 
 // parser usage ref pra evitar unused import quando compila
 var _ = parser.ListSessions
+
+// cmdAdviseCLI roda o advisor (rule-based) e formata pra terminal/JSON.
+func cmdAdviseCLI(args []string) {
+	flags, _ := parseFlags(args, map[string]bool{"json": true})
+	_, asJSON := flags["json"]
+
+	ctx, err := loadCLICtx(false) // não precisa AI
+	if err != nil {
+		fatal(err)
+	}
+	defer ctx.db.Close()
+	all, err := ctx.db.ListSessions()
+	if err != nil {
+		fatal(err)
+	}
+	recs, err := advisor.Run(ctx.db, ctx.pricing, all)
+	if err != nil {
+		fatal(err)
+	}
+	if asJSON {
+		emitJSON(map[string]any{
+			"recommendations": recs,
+			"count":           len(recs),
+		})
+		return
+	}
+	if len(recs) == 0 {
+		fmt.Println("✓ Nenhuma recomendação no momento — uso parece bom!")
+		return
+	}
+	fmt.Printf("💡 %d recomendações (ordenadas por impacto)\n\n", len(recs))
+	icons := map[string]string{
+		"skill":           "🛠️ ",
+		"hook":            "🪝",
+		"model_downgrade": "💸",
+		"cache":           "💾",
+		"subagent":        "🌳",
+		"claude_md":       "📝",
+	}
+	for i, r := range recs {
+		icon := icons[r.Type]
+		if icon == "" {
+			icon = "•"
+		}
+		fmt.Printf("%d. %s %s  [%s · confidence:%s]\n", i+1, icon, r.Title, r.Type, r.Confidence)
+		fmt.Printf("   %s\n", r.Description)
+		fmt.Printf("   → %s\n", r.Action)
+		if r.Savings != "" {
+			fmt.Printf("   💰 %s\n", r.Savings)
+		}
+		fmt.Printf("   📎 %s\n\n", r.Evidence)
+	}
+}

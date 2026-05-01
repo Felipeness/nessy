@@ -256,6 +256,10 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
+// Conn devolve o handle pra queries ad-hoc (advisor, debug, scripts).
+// Não usar pra escrita — Upsert/IndexX já encapsulam transações.
+func (db *DB) Conn() *sql.DB { return db.conn }
+
 const upsertSessionSQL = `
 INSERT INTO sessions (
 	session_id, project_dir, jsonl_path, jsonl_mtime,

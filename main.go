@@ -51,6 +51,7 @@ QUERY (Fase 7a — saída human-readable, ou JSON com --json):
   nessy aggregated             top patterns/decisions/problemas cross-session
   nessy project <path>         p90, tech, top tools de 1 projeto
   nessy standup [--since 7d]   markdown timeline|project|editorial
+  nessy advise                 recomenda skills/hooks/downgrades baseado em padrões reais
 
 MCP (Fase 8):
   nessy mcp                    sobe MCP server em stdio (chamado pelo Claude Code)
@@ -107,6 +108,8 @@ func main() {
 		cmdProjectCLI(os.Args[2:])
 	case "standup":
 		cmdStandupCLI(os.Args[2:])
+	case "advise":
+		cmdAdviseCLI(os.Args[2:])
 	case "mcp":
 		cmdMCPServe()
 	case "mcp-install":
