@@ -58,9 +58,9 @@ MCP (Fase 8):
                   [--uninstall]
 
 DAEMON (Fase 9):
-  nessy daemon-install         instala launchd plist pra subir 'nessy serve' no login
-  nessy daemon-uninstall       remove launchd plist
-  nessy daemon-status          mostra estado do daemon
+  nessy daemon-install         auto-start no login (launchd/systemd; instruções no Windows)
+  nessy daemon-uninstall       remove o auto-start
+  nessy daemon-status          mostra estado + health do daemon
 
 EXAMPLES:
   nessy list
