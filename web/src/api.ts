@@ -10,6 +10,7 @@ import type {
   Insight,
   Knowledge,
   KnowledgeAggregate,
+  MetaResponse,
   Message,
   Profile,
   ReindexStats,
@@ -53,6 +54,7 @@ export const api = {
   sessionMessages: (id: string, n = 10) =>
     get<Message[]>(`/api/sessions/${id}/messages?n=${n}`),
   stats: () => get<Stats>('/api/stats'),
+  meta: () => get<MetaResponse>('/api/meta'),
   behavioral: () => get<Behavioral>('/api/stats/behavioral'),
   behaviorAdvanced: () => get<BehaviorAdvanced>('/api/behavior/advanced'),
   costs: () => get<Costs>('/api/costs'),

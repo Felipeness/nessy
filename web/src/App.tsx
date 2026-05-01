@@ -13,6 +13,7 @@ import { AITab } from './tabs/AITab'
 import { CompareTab } from './tabs/CompareTab'
 import { StudioTab } from './tabs/StudioTab'
 import { NessTab } from './tabs/NessTab'
+import { MetaTab } from './tabs/MetaTab'
 import type { ReindexStats, TabName } from './types'
 
 const VALID_TABS: TabName[] = [
@@ -27,6 +28,7 @@ const VALID_TABS: TabName[] = [
   'compare',
   'studio',
   'ness',
+  'meta',
 ]
 
 function tabFromHash(): TabName {
@@ -84,6 +86,7 @@ export default function App() {
       {tab === 'compare' && <CompareTab reindexCounter={reindexCounter} />}
       {tab === 'studio' && <StudioTab />}
       {tab === 'ness' && <NessTab />}
+      {tab === 'meta' && <MetaTab reindexCounter={reindexCounter} />}
     </Layout>
   )
 }

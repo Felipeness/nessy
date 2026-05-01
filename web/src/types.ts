@@ -144,6 +144,48 @@ export type TabName =
   | 'compare'
   | 'studio'
   | 'ness'
+  | 'meta'
+
+// Meta tab — análise cross-session (file reuse, cost por ticket, convergence)
+export type FileReuse = {
+  file_path: string
+  session_count: number
+  total_ops: number
+}
+
+export type CostByTicket = {
+  ticket: string
+  sessions: number
+  cost_usd: number
+  branches: string[]
+}
+
+export type ConvergenceStats = {
+  group: string
+  count: number
+  p50_turns: number
+  p90_turns: number
+  resolved: number
+  total: number
+}
+
+export type LoopHit = {
+  session_id: string
+  tool_name: string
+  input_hash: string
+  input_preview: string
+  count: number
+  span_secs: number
+  first_at: string
+}
+
+export type MetaResponse = {
+  generated_at: number
+  file_reuse: FileReuse[] | null
+  cost_by_ticket: CostByTicket[] | null
+  convergence_by_model: ConvergenceStats[] | null
+  loops_detected: LoopHit[] | null
+}
 
 export type ChatMsg = {
   role: 'user' | 'assistant' | 'system'
