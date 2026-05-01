@@ -17,6 +17,7 @@ import (
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/parser"
 	"github.com/felipeness/claude-history/internal/pricing"
+	"github.com/felipeness/claude-history/internal/search"
 	"github.com/felipeness/claude-history/internal/stats"
 )
 
@@ -807,10 +808,136 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		s.searchSemantic(r.Context(), q, candidates, embeddingByID, &resp)
 	case "metadata":
 		s.searchMetadata(q, candidates, summaryByID, &resp)
-	default: // hybrid — metadata primeiro, depois FTS, dedupe por session
-		s.searchHybrid(q, candidates, summaryByID, &resp, expandFlag, fuzzyFlag)
+	case "rrf":
+		// RRF explícito — sempre tenta usar dense + bm25
+		s.searchRRF(r.Context(), q, candidates, summaryByID, embeddingByID, &resp)
+	default: // hybrid — auto-upgrade pra RRF se AI tá enabled e há embeddings
+		if s.AIEnabled && len(embeddingByID) > 0 {
+			resp.Mode = "hybrid+rrf"
+			s.searchRRF(r.Context(), q, candidates, summaryByID, embeddingByID, &resp)
+		} else {
+			s.searchHybrid(q, candidates, summaryByID, &resp, expandFlag, fuzzyFlag)
+		}
 	}
 	writeJSON(w, 200, resp)
+}
+
+// searchRRF combina BM25 (FTS5) + dense (embeddings) + metadata via Reciprocal
+// Rank Fusion. Detecta query type (identifier vs prose) pra ajustar pesos.
+//
+// Pipeline:
+//  1. FTS5 → ranked list por BM25 score (top 50)
+//  2. Embed query → cosine vs todos embeddings → top 50
+//  3. Metadata match → ordem de match (se houver)
+//  4. RRF merge com pesos derivados de DetectQueryType
+//  5. Map back pra session entries com role="rrf:..." mostrando fontes
+//
+// Fallback elegante: se embed falhar (Ollama down), só BM25 + metadata.
+func (s *Server) searchRRF(
+	ctx context.Context,
+	q string,
+	sessions []*model.Session,
+	summaries map[string]string,
+	embeddingByID map[string][]float32,
+	resp *searchResp,
+) {
+	byID := map[string]*model.Session{}
+	for _, sess := range sessions {
+		byID[sess.SessionID] = sess
+	}
+	candidates := map[string]bool{}
+	for id := range byID {
+		candidates[id] = true
+	}
+
+	rankings := map[string][]string{}
+
+	// 1. BM25 via FTS5
+	if ftsResults, err := s.DB.SearchFTSExact(q); err == nil {
+		seen := map[string]bool{}
+		for _, r := range ftsResults {
+			if !candidates[r.SessionID] || seen[r.SessionID] {
+				continue
+			}
+			seen[r.SessionID] = true
+			rankings["bm25"] = append(rankings["bm25"], r.SessionID)
+		}
+	}
+
+	// 2. Dense — embed query, cosine vs todos
+	if s.AIClient != nil && len(embeddingByID) > 0 {
+		embCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		queryEmb, err := s.AIClient.Embedding(embCtx, "nomic-embed-text", q)
+		if err == nil && len(queryEmb) > 0 {
+			type scored struct {
+				id  string
+				sim float64
+			}
+			var scoredList []scored
+			for id, emb := range embeddingByID {
+				if !candidates[id] {
+					continue
+				}
+				sim := ai.Cosine(queryEmb, emb)
+				if sim > 0 {
+					scoredList = append(scoredList, scored{id, sim})
+				}
+			}
+			sort.Slice(scoredList, func(i, j int) bool {
+				if scoredList[i].sim != scoredList[j].sim {
+					return scoredList[i].sim > scoredList[j].sim
+				}
+				return scoredList[i].id < scoredList[j].id
+			})
+			// Cap em top 50 — RRF não precisa do tail
+			if len(scoredList) > 50 {
+				scoredList = scoredList[:50]
+			}
+			for _, s := range scoredList {
+				rankings["dense"] = append(rankings["dense"], s.id)
+			}
+		}
+	}
+
+	// 3. Metadata — ordem natural (start_time desc geralmente)
+	lower := strings.ToLower(q)
+	for _, sess := range sessions {
+		if hit, _, _ := metaMatchExt(sess, lower, summaries); hit {
+			rankings["metadata"] = append(rankings["metadata"], sess.SessionID)
+		}
+	}
+
+	// 4. RRF merge
+	weights := search.WeightsFor(search.DetectQueryType(q))
+	weights["metadata"] = 0.7 // metadata é tiebreaker, não primary signal
+	hits := search.MergeRRF(rankings, weights)
+
+	// 5. Map back. Snippet/role do FTS quando disponível, senão metadata.
+	ftsSnippets := map[string]index.SearchResult{}
+	if results, err := s.DB.SearchFTSExact(q); err == nil {
+		for _, r := range results {
+			if _, ok := ftsSnippets[r.SessionID]; !ok {
+				ftsSnippets[r.SessionID] = r
+			}
+		}
+	}
+	for _, h := range hits {
+		sess, ok := byID[h.SessionID]
+		if !ok {
+			continue
+		}
+		entry := searchResultEntry{
+			Session: sess,
+			Role:    fmt.Sprintf("rrf:%s", strings.Join(h.Sources, "+")),
+		}
+		if ftsHit, ok := ftsSnippets[h.SessionID]; ok {
+			entry.Snippet = ftsHit.Snippet
+		} else if hit, snippet, _ := metaMatchExt(sess, lower, summaries); hit {
+			entry.Snippet = snippet
+		}
+		resp.Results = append(resp.Results, entry)
+	}
 }
 
 // searchHybrid roda metadata + FTS5 e combina. expand controla dedup,
