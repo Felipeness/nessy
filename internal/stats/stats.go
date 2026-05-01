@@ -118,24 +118,19 @@ func CostThisMonth(sessions []*model.Session, p *pricing.Pricing) MonthCost {
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfMonth := startOfMonth.AddDate(0, 1, 0)
+	endOfDay := startOfDay.AddDate(0, 0, 1)
 
 	var acc, today float64
 	for _, s := range sessions {
-		// Inclui sessions que terminaram (ou ainda rolam) neste mês — não só
-		// as que começaram. Sessions longas (multi-dia) são contadas no mês
-		// onde a maior parte da atividade caiu (heurística: endTime).
-		if s.EndTime.Before(startOfMonth) {
-			continue
-		}
 		c, ok := p.Cost(s)
 		if !ok {
 			continue
 		}
-		acc += c.USD
-		// Today: session que terminou hoje OU ainda em curso
-		if s.EndTime.After(startOfDay) || s.EndTime.Equal(startOfDay) {
-			today += c.USD
-		}
+		// Pro-rata: atribui só a fração do custo que caiu na janela.
+		// Sessions de 78h cobrindo abril→maio dão ~5h pra maio, não 78h.
+		acc += c.USD * overlapRatio(s.StartTime, s.EndTime, startOfMonth, endOfMonth)
+		today += c.USD * overlapRatio(s.StartTime, s.EndTime, startOfDay, endOfDay)
 	}
 	day := now.Day()
 	avgPerDay := acc / float64(day)
@@ -147,6 +142,33 @@ func CostThisMonth(sessions []*model.Session, p *pricing.Pricing) MonthCost {
 		Days:        totalDays,
 		DayOfMonth:  day,
 	}
+}
+
+// overlapRatio devolve a fração de [sessStart, sessEnd] que cai em [winStart, winEnd].
+// Retorna 0 se não há overlap; 1 se a session inteira está dentro da janela.
+// Sessions de duração 0 retornam 1 se startTime cai na janela.
+func overlapRatio(sessStart, sessEnd, winStart, winEnd time.Time) float64 {
+	start := sessStart
+	if winStart.After(start) {
+		start = winStart
+	}
+	end := sessEnd
+	if winEnd.Before(end) {
+		end = winEnd
+	}
+	overlap := end.Sub(start)
+	if overlap <= 0 {
+		return 0
+	}
+	total := sessEnd.Sub(sessStart)
+	if total <= 0 {
+		// Session instantânea: tá dentro da janela se start está dentro
+		if !sessStart.Before(winStart) && sessStart.Before(winEnd) {
+			return 1
+		}
+		return 0
+	}
+	return float64(overlap) / float64(total)
 }
 
 func daysInMonth(t time.Time) int {
