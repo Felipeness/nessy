@@ -140,6 +140,8 @@ func ParseSession(path string) (*Session, error) {
 		ToolCalls: map[string]int{},
 	}
 	agentSet := map[string]struct{}{} // distinct agentIds vistos
+	turnIdx := 0                      // 1-based turn counter pra resolved_at_turn
+	lastResolvedTurn := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 
@@ -183,6 +185,7 @@ func ParseSession(path string) (*Session, error) {
 		case "user":
 			s.UserMessages++
 			s.MessageCount++
+			turnIdx++
 			if ev.Message != nil {
 				text := extractText(ev.Message.Content)
 				if s.FirstUserMsg == "" && text != "" {
@@ -191,10 +194,15 @@ func ParseSession(path string) (*Session, error) {
 				if text != "" {
 					s.LastUserMsg = truncate(text, 200)
 				}
+				// Resolved-at-turn: última msg user com signal positivo ganha
+				if !ev.IsSidechain && hasResolvedSignal(text) {
+					lastResolvedTurn = turnIdx
+				}
 			}
 		case "assistant":
 			s.AssistantMessages++
 			s.MessageCount++
+			turnIdx++
 			if ev.Message != nil {
 				if ev.Message.Model != "" && s.Model == "" {
 					s.Model = ev.Message.Model
@@ -209,6 +217,7 @@ func ParseSession(path string) (*Session, error) {
 			}
 		}
 	}
+	s.ResolvedAtTurn = lastResolvedTurn
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
@@ -386,6 +395,29 @@ type ToolEvent struct {
 	InputPreview string // primeiros ~100 chars do input flatten — pra UI
 }
 
+// FileOp representa um toque em arquivo (Edit/Write/Read/etc) numa session.
+type FileOp struct {
+	SessionID string
+	FilePath  string
+	OpCount   int       // somado quando o mesmo path aparece N vezes
+	FirstOpAt time.Time // primeiro toque cronológico
+}
+
+// resolvedPatterns são frases positivas do user que sinalizam conclusão.
+// Conservador — só palavras inequívocas. Falsos positivos seriam piores que
+// falsos negativos (pra esta métrica perder uma session = OK; classificar
+// uma session frustrada como resolvida = veneno na análise).
+var resolvedPatterns = []string{
+	"funcionou", "funciona", "funcionando",
+	"perfeito", "perfeita",
+	"resolvido", "resolveu",
+	"obrigado", "obrigada", "valeu",
+	"ficou bom", "ficou ótimo", "ficou otimo",
+	"ta bom assim", "show",
+	"merge ", "vou commitar", "commitei", "commitar",
+	"deploy", "deployed",
+}
+
 // ParseToolEvents lê o JSONL e devolve um event por tool_use encontrado.
 // Filtra subagents/ pra não duplicar.
 func ParseToolEvents(path string) ([]ToolEvent, error) {
@@ -432,6 +464,117 @@ func ParseToolEvents(path string) ([]ToolEvent, error) {
 		}
 	}
 	return out, scanner.Err()
+}
+
+// hasResolvedSignal devolve true se a msg do user tem palavras-chave positivas.
+// Conservador — false negatives são preferíveis a false positives.
+func hasResolvedSignal(text string) bool {
+	if text == "" {
+		return false
+	}
+	low := strings.ToLower(text)
+	for _, p := range resolvedPatterns {
+		if strings.Contains(low, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseFileOps varre o JSONL e devolve operações em arquivos por path.
+// Extrai file_path de tool_use de Edit/Write/Read/NotebookEdit/Glob/Grep.
+// Agrega: mesmo path em N tool_uses dentro de 1 session = 1 row com op_count=N.
+func ParseFileOps(path string) ([]FileOp, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+
+	type acc struct {
+		count   int
+		firstAt time.Time
+	}
+	byPath := map[string]*acc{}
+	sessionID := ""
+
+	for scanner.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.SessionID != "" && sessionID == "" {
+			sessionID = ev.SessionID
+		}
+		if ev.Type != "assistant" || ev.Message == nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, ev.Timestamp)
+		if err != nil {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input,omitempty"`
+		}
+		if err := json.Unmarshal(ev.Message.Content, &blocks); err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" {
+				continue
+			}
+			fp := extractFilePath(b.Name, b.Input)
+			if fp == "" {
+				continue
+			}
+			a, ok := byPath[fp]
+			if !ok {
+				a = &acc{firstAt: t}
+				byPath[fp] = a
+			}
+			a.count++
+			if t.Before(a.firstAt) {
+				a.firstAt = t
+			}
+		}
+	}
+
+	out := make([]FileOp, 0, len(byPath))
+	for fp, a := range byPath {
+		out = append(out, FileOp{
+			SessionID: sessionID,
+			FilePath:  fp,
+			OpCount:   a.count,
+			FirstOpAt: a.firstAt,
+		})
+	}
+	return out, scanner.Err()
+}
+
+// extractFilePath descodifica o input JSON de um tool_use e devolve o path
+// se o tool é file-touching (Edit/Write/Read/etc). Vazio caso contrário.
+func extractFilePath(toolName string, input json.RawMessage) string {
+	switch toolName {
+	case "Edit", "Write", "Read", "MultiEdit":
+		var inp struct {
+			FilePath string `json:"file_path"`
+		}
+		if err := json.Unmarshal(input, &inp); err == nil {
+			return inp.FilePath
+		}
+	case "NotebookEdit":
+		var inp struct {
+			NotebookPath string `json:"notebook_path"`
+		}
+		if err := json.Unmarshal(input, &inp); err == nil {
+			return inp.NotebookPath
+		}
+	}
+	return ""
 }
 
 // previewInput devolve uma versão truncada do input pra UI debug.

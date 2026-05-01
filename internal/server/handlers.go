@@ -22,6 +22,7 @@ import (
 )
 
 func registerAPI(mux *http.ServeMux, s *Server) {
+	mux.HandleFunc("/api/meta", s.handleMeta)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSessionByID) // /api/sessions/<id> + /api/sessions/<id>/messages
 	mux.HandleFunc("/api/stats", s.handleStats)
@@ -713,6 +714,86 @@ type searchResultEntry struct {
 	Snippet string         `json:"snippet,omitempty"`
 	Role    string         `json:"role,omitempty"`
 	Rank    float64        `json:"rank,omitempty"`
+}
+
+// metaResp é o payload do Studio Meta tab. Cada bloco é uma "card" de chart.
+type metaResp struct {
+	GeneratedAt   int64                  `json:"generated_at"`
+	FileReuse     []index.FileReuse      `json:"file_reuse"`     // top arquivos tocados em N+ sessions
+	CostByTicket  []costByTicketEntry    `json:"cost_by_ticket"` // CC-1234 → custo agregado
+	Convergence   []index.ConvergenceStats `json:"convergence_by_model"` // resolved_at_turn p50/p90 por modelo
+	LoopsDetected []index.LoopHit        `json:"loops_detected"` // top N loops (já existia em S.2)
+}
+
+type costByTicketEntry struct {
+	Ticket   string   `json:"ticket"`
+	Sessions int      `json:"sessions"`
+	CostUSD  float64  `json:"cost_usd"`
+	Branches []string `json:"branches"`
+}
+
+// handleMeta agrega métricas de meta-análise pro Studio Meta tab.
+// Cada bloco é uma query SQL independente — render frontend escolhe quais
+// renderizar. Não é cacheado server-side ainda — o dataset é pequeno (≤ N
+// rows por bloco).
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	resp := metaResp{GeneratedAt: time.Now().Unix()}
+
+	// File reuse top
+	if reuse, err := s.DB.FileReuseTop(2, 20); err == nil {
+		resp.FileReuse = reuse
+	}
+
+	// Cost by ticket — precisa pricing pra computar custo total
+	if rows, err := s.DB.CostByTicketRows(); err == nil {
+		all, _ := s.sessionsAll()
+		byID := map[string]*model.Session{}
+		for _, sess := range all {
+			byID[sess.SessionID] = sess
+		}
+		// re-walk pra somar custo das sessions de cada ticket
+		costByTicket := map[string]float64{}
+		sessionsByTicket := map[string][]string{}
+		for _, sess := range all {
+			t := index.ExtractTicket(sess.GitBranch)
+			if t == "" {
+				continue
+			}
+			sessionsByTicket[t] = append(sessionsByTicket[t], sess.SessionID)
+			if s.Pricing != nil {
+				if c, ok := s.Pricing.Cost(sess); ok {
+					costByTicket[t] += c.USD
+				}
+			}
+		}
+		for t, info := range rows {
+			resp.CostByTicket = append(resp.CostByTicket, costByTicketEntry{
+				Ticket:   t,
+				Sessions: info.Sessions,
+				CostUSD:  costByTicket[t],
+				Branches: info.Branches,
+			})
+		}
+		// Sort por cost desc
+		sort.Slice(resp.CostByTicket, func(i, j int) bool {
+			return resp.CostByTicket[i].CostUSD > resp.CostByTicket[j].CostUSD
+		})
+		if len(resp.CostByTicket) > 20 {
+			resp.CostByTicket = resp.CostByTicket[:20]
+		}
+	}
+
+	// Convergence speed por modelo
+	if conv, err := s.DB.ConvergenceByModel(); err == nil {
+		resp.Convergence = conv
+	}
+
+	// Loops detected (≥3× em ≤60min — mesmo default do TUI Detailed)
+	if loops, err := s.DB.DetectLoops(3, 3600); err == nil {
+		resp.LoopsDetected = loops
+	}
+
+	writeJSON(w, 200, resp)
 }
 
 // handleSearch suporta 4 modos:

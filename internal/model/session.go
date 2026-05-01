@@ -34,6 +34,11 @@ type Session struct {
 	// Sidechain (subagent) tracking — agregado em parse-time.
 	SidechainTurns  int `json:"sidechain_turns"`  // total de turns com isSidechain=true
 	SidechainAgents int `json:"sidechain_agents"` // distinct agentIds
+
+	// ResolvedAtTurn é o turno (1-based) onde o user demonstrou conclusão
+	// (msg positiva tipo "perfeito", "funcionou"). 0 = não convergiu / não detectado.
+	// Usado pra métrica "convergence speed" — quanto tempo até primeira solução.
+	ResolvedAtTurn int `json:"resolved_at_turn,omitempty"`
 }
 
 // Duration returns the session wall-clock duration.

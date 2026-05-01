@@ -64,6 +64,19 @@ CREATE INDEX IF NOT EXISTS idx_tool_events_loop
 CREATE INDEX IF NOT EXISTS idx_tool_events_session
 	ON tool_events(session_id);
 
+-- session_files: arquivos tocados por cada session (Edit/Write/Read/...).
+-- Habilita métricas de retrabalho (mesmo arquivo aberto em N sessions
+-- distintas em janela curta = sinal de iteração frequente / instabilidade).
+CREATE TABLE IF NOT EXISTS session_files (
+	session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+	file_path TEXT NOT NULL,
+	op_count INTEGER NOT NULL DEFAULT 0,
+	first_op_ts INTEGER NOT NULL,
+	PRIMARY KEY (session_id, file_path)
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_session_files_path
+	ON session_files(file_path);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 	session_id UNINDEXED,
 	role,
@@ -226,6 +239,12 @@ func runMigrations(conn *sql.DB) error {
 		"input_preview TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	// resolved_at_turn: NULL se session não convergiu (sem msg final positiva).
+	// Inteiro 1-based pra "turno onde o user demonstrou que tava resolvido".
+	if err := addColIfMissing("sessions", "resolved_at_turn",
+		"resolved_at_turn INTEGER"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -243,8 +262,8 @@ INSERT INTO sessions (
 	start_time, end_time, message_count, user_messages, assistant_messages,
 	first_user_msg, last_user_msg, git_branch, claude_version, model,
 	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-	sidechain_turns, sidechain_agents
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	sidechain_turns, sidechain_agents, resolved_at_turn
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(session_id) DO UPDATE SET
 	project_dir=excluded.project_dir,
 	jsonl_path=excluded.jsonl_path,
@@ -264,7 +283,8 @@ ON CONFLICT(session_id) DO UPDATE SET
 	cache_creation_tokens=excluded.cache_creation_tokens,
 	cache_read_tokens=excluded.cache_read_tokens,
 	sidechain_turns=excluded.sidechain_turns,
-	sidechain_agents=excluded.sidechain_agents
+	sidechain_agents=excluded.sidechain_agents,
+	resolved_at_turn=excluded.resolved_at_turn
 `
 
 // Upsert inserts or updates a session and replaces its tool_uses.
@@ -275,13 +295,18 @@ func (db *DB) Upsert(s *model.Session) error {
 	}
 	defer tx.Rollback()
 
+	// resolved_at_turn é nullable em SQL — mapeia 0 → NULL pra busca SQL ficar limpa
+	var resolvedArg any
+	if s.ResolvedAtTurn > 0 {
+		resolvedArg = s.ResolvedAtTurn
+	}
 	if _, err := tx.Exec(upsertSessionSQL,
 		s.SessionID, s.ProjectDir, s.JSONLPath, s.JSONLMtime.UnixNano(),
 		s.StartTime.UnixNano(), s.EndTime.UnixNano(),
 		s.MessageCount, s.UserMessages, s.AssistantMessages,
 		s.FirstUserMsg, s.LastUserMsg, s.GitBranch, s.ClaudeVersion, s.Model,
 		s.InputTokens, s.OutputTokens, s.CacheCreationTokens, s.CacheReadTokens,
-		s.SidechainTurns, s.SidechainAgents,
+		s.SidechainTurns, s.SidechainAgents, resolvedArg,
 	); err != nil {
 		return fmt.Errorf("upsert session: %w", err)
 	}
@@ -321,15 +346,232 @@ func (db *DB) IndexToolEvents(sessionID string, events []parser.ToolEvent) error
 	return tx.Commit()
 }
 
+// IndexFileOps substitui as file ops de uma session pelas da lista.
+// Idempotente: chamar 2× é no-op.
+func (db *DB) IndexFileOps(sessionID string, ops []parser.FileOp) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM session_files WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("clear session_files: %w", err)
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO session_files (session_id, file_path, op_count, first_op_ts) VALUES (?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, op := range ops {
+		if _, err := stmt.Exec(sessionID, op.FilePath, op.OpCount, op.FirstOpAt.UnixNano()); err != nil {
+			return fmt.Errorf("insert session_file: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// FileReuse mostra arquivos tocados em ≥ minSessions sessions distintas.
+// Sinal de iteração frequente / instabilidade naquele arquivo.
+type FileReuse struct {
+	FilePath     string `json:"file_path"`
+	SessionCount int    `json:"session_count"`
+	TotalOps     int    `json:"total_ops"`
+}
+
+// FileReuseTop devolve top arquivos por nº de sessions que os tocaram.
+// Filtra arquivos com ≥ minSessions e retorna os top limit.
+func (db *DB) FileReuseTop(minSessions, limit int) ([]FileReuse, error) {
+	if minSessions < 2 {
+		minSessions = 2
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := db.conn.Query(`
+		SELECT file_path,
+		       COUNT(DISTINCT session_id) AS session_count,
+		       SUM(op_count) AS total_ops
+		FROM session_files
+		GROUP BY file_path
+		HAVING session_count >= ?
+		ORDER BY session_count DESC, total_ops DESC
+		LIMIT ?
+	`, minSessions, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileReuse
+	for rows.Next() {
+		var f FileReuse
+		if err := rows.Scan(&f.FilePath, &f.SessionCount, &f.TotalOps); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// CostByTicket extrai pattern tipo CC-1234 do branch e agrega custo.
+type CostByTicket struct {
+	Ticket   string
+	Sessions int
+	CostUSD  float64 // requer pricing externo — preencher depois
+	Branches []string
+}
+
+// CostByTicketRows devolve rows brutas (Ticket, Sessions, Branches) — caller
+// computa CostUSD via pricing depois pra evitar dependência cruzada.
+func (db *DB) CostByTicketRows() (map[string]*CostByTicket, error) {
+	rows, err := db.conn.Query(`SELECT session_id, git_branch FROM sessions WHERE git_branch IS NOT NULL AND git_branch != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]*CostByTicket{}
+	for rows.Next() {
+		var sid, branch string
+		if err := rows.Scan(&sid, &branch); err != nil {
+			return nil, err
+		}
+		ticket := ExtractTicket(branch)
+		if ticket == "" {
+			continue
+		}
+		t, ok := out[ticket]
+		if !ok {
+			t = &CostByTicket{Ticket: ticket}
+			out[ticket] = t
+		}
+		t.Sessions++
+		// Dedup branches
+		seen := false
+		for _, b := range t.Branches {
+			if b == branch {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			t.Branches = append(t.Branches, branch)
+		}
+	}
+	return out, rows.Err()
+}
+
+// ExtractTicket pega XX-NNNN de uma branch tipo "feat/CC-1234-foo".
+// Devolve string vazia se não casar pattern. Exposed pra uso externo.
+func ExtractTicket(branch string) string {
+	for i := 0; i < len(branch)-3; i++ {
+		// procura por LETTER+ - DIGIT+
+		j := i
+		for j < len(branch) && branch[j] >= 'A' && branch[j] <= 'Z' {
+			j++
+		}
+		if j == i || j >= len(branch) || branch[j] != '-' {
+			continue
+		}
+		k := j + 1
+		for k < len(branch) && branch[k] >= '0' && branch[k] <= '9' {
+			k++
+		}
+		if k > j+1 && k-j >= 2 && j-i >= 2 {
+			return branch[i:k]
+		}
+	}
+	return ""
+}
+
+// ConvergenceStats agrega resolved_at_turn por algum group key.
+type ConvergenceStats struct {
+	Group    string `json:"group"`
+	Count    int    `json:"count"`
+	P50Turns int    `json:"p50_turns"` // mediana de resolved_at_turn (apenas sessions resolvidas)
+	P90Turns int    `json:"p90_turns"`
+	Resolved int    `json:"resolved"` // count das que tem resolved_at_turn > 0
+	Total    int    `json:"total"`    // total de sessions no group
+}
+
+// ConvergenceByModel agrupa convergence por modelo.
+func (db *DB) ConvergenceByModel() ([]ConvergenceStats, error) {
+	return db.convergenceBy("COALESCE(model, '(unknown)')")
+}
+
+// convergenceBy é o helper genérico — group expr é injetado direto, então
+// só usar com strings hardcoded.
+func (db *DB) convergenceBy(groupExpr string) ([]ConvergenceStats, error) {
+	q := fmt.Sprintf(`
+		WITH grouped AS (
+			SELECT %s AS grp, resolved_at_turn FROM sessions
+		)
+		SELECT grp,
+		       COUNT(*) AS total,
+		       SUM(CASE WHEN resolved_at_turn IS NOT NULL AND resolved_at_turn > 0 THEN 1 ELSE 0 END) AS resolved
+		FROM grouped
+		GROUP BY grp
+		HAVING total > 0
+		ORDER BY total DESC
+	`, groupExpr)
+	rows, err := db.conn.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ConvergenceStats
+	for rows.Next() {
+		var c ConvergenceStats
+		if err := rows.Scan(&c.Group, &c.Total, &c.Resolved); err != nil {
+			return nil, err
+		}
+		c.Count = c.Resolved
+		// Computa percentis em segunda passada
+		c.P50Turns, c.P90Turns = db.percentilesOfResolved(groupExpr, c.Group)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// percentilesOfResolved devolve p50 e p90 de resolved_at_turn pra um group.
+func (db *DB) percentilesOfResolved(groupExpr, group string) (p50, p90 int) {
+	q := fmt.Sprintf(`
+		SELECT resolved_at_turn FROM sessions
+		WHERE %s = ? AND resolved_at_turn IS NOT NULL AND resolved_at_turn > 0
+		ORDER BY resolved_at_turn ASC
+	`, groupExpr)
+	rows, err := db.conn.Query(q, group)
+	if err != nil {
+		return 0, 0
+	}
+	defer rows.Close()
+	var values []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err == nil {
+			values = append(values, v)
+		}
+	}
+	if len(values) == 0 {
+		return 0, 0
+	}
+	p50 = values[len(values)/2]
+	p90Idx := (len(values) * 9) / 10
+	if p90Idx >= len(values) {
+		p90Idx = len(values) - 1
+	}
+	p90 = values[p90Idx]
+	return
+}
+
 // LoopHit representa um padrão de tool repetido suspeito.
 type LoopHit struct {
-	SessionID    string
-	ToolName     string
-	InputHash    string
-	InputPreview string // amostra do input pra UI
-	Count        int
-	SpanSecs     float64 // tempo entre primeiro e último (segundos)
-	FirstAt      time.Time
+	SessionID    string    `json:"session_id"`
+	ToolName     string    `json:"tool_name"`
+	InputHash    string    `json:"input_hash"`
+	InputPreview string    `json:"input_preview"`
+	Count        int       `json:"count"`
+	SpanSecs     float64   `json:"span_secs"` // tempo entre primeiro e último
+	FirstAt      time.Time `json:"first_at"`
 }
 
 // DetectLoops devolve padrões `count >= minCount` de mesmo (tool, input_hash)
@@ -384,7 +626,8 @@ SELECT session_id, project_dir, jsonl_path, jsonl_mtime,
 	start_time, end_time, message_count, user_messages, assistant_messages,
 	first_user_msg, last_user_msg, git_branch, claude_version, model,
 	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-	sidechain_turns, sidechain_agents
+	sidechain_turns, sidechain_agents,
+	COALESCE(resolved_at_turn, 0)
 FROM sessions`
 
 // GetByID returns a single session by ID, or sql.ErrNoRows if not found.
@@ -441,7 +684,7 @@ func scanSession(rows *sql.Rows) (*model.Session, error) {
 		&start, &end, &s.MessageCount, &s.UserMessages, &s.AssistantMessages,
 		&s.FirstUserMsg, &s.LastUserMsg, &s.GitBranch, &s.ClaudeVersion, &s.Model,
 		&s.InputTokens, &s.OutputTokens, &s.CacheCreationTokens, &s.CacheReadTokens,
-		&s.SidechainTurns, &s.SidechainAgents,
+		&s.SidechainTurns, &s.SidechainAgents, &s.ResolvedAtTurn,
 	); err != nil {
 		return nil, err
 	}
