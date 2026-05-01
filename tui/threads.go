@@ -622,13 +622,21 @@ func (v threadsView) renderThreadCard(b *strings.Builder, t *stats.Thread, now t
 			gapStr = muted.Render(fmt.Sprintf(" ↻ +%s", humanDurShort(s.GapFromPrev)))
 		}
 
-		line := fmt.Sprintf("%s  %s  %s  %-5s  %s%s  %s",
+		// Sidechain badge — só aparece se session teve subagents
+		subStr := ""
+		if s.SidechainTurns > 0 {
+			subStr = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa")).
+				Render(fmt.Sprintf("↳%d", s.SidechainAgents))
+		}
+
+		line := fmt.Sprintf("%s  %s  %s  %-5s  %s%s%s  %s",
 			borderStyle.Render("│"),
 			dot,
 			muted.Render(when),
 			dr,
 			lipgloss.NewStyle().Foreground(colorFg).Render(title),
 			gapStr,
+			subStr,
 			sidStyled)
 
 		if isCursor {

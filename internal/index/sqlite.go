@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 	input_tokens INTEGER NOT NULL DEFAULT 0,
 	output_tokens INTEGER NOT NULL DEFAULT 0,
 	cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-	cache_read_tokens INTEGER NOT NULL DEFAULT 0
+	cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+	sidechain_turns INTEGER NOT NULL DEFAULT 0,
+	sidechain_agents INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time DESC);
@@ -120,11 +122,53 @@ func Open(path string) (*DB, error) {
 		conn.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+	// Migrations idempotentes — schemaSQL só cria tables/cols pra DBs novos.
+	// Pra DBs existentes precisamos ALTER TABLE on demand.
+	if err := runMigrations(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("migrations: %w", err)
+	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO last_index_meta(key, value) VALUES('schema_version', ?)`, currentSchemaVersion); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("set schema version: %w", err)
 	}
 	return &DB{conn: conn, path: path}, nil
+}
+
+// runMigrations aplica ALTER TABLE pras colunas que vieram depois de v1.
+// Cada migration checa se a coluna já existe via PRAGMA antes de adicionar
+// — rodar 2× é no-op.
+func runMigrations(conn *sql.DB) error {
+	addColIfMissing := func(table, col, ddl string) error {
+		rows, err := conn.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, ctype string
+			var notnull, pk int
+			var dflt sql.NullString
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return err
+			}
+			if name == col {
+				return nil // já existe
+			}
+		}
+		_, err = conn.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, ddl))
+		return err
+	}
+	if err := addColIfMissing("sessions", "sidechain_turns",
+		"sidechain_turns INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addColIfMissing("sessions", "sidechain_agents",
+		"sidechain_agents INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Close closes the underlying connection.
@@ -140,8 +184,9 @@ INSERT INTO sessions (
 	session_id, project_dir, jsonl_path, jsonl_mtime,
 	start_time, end_time, message_count, user_messages, assistant_messages,
 	first_user_msg, last_user_msg, git_branch, claude_version, model,
-	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+	sidechain_turns, sidechain_agents
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(session_id) DO UPDATE SET
 	project_dir=excluded.project_dir,
 	jsonl_path=excluded.jsonl_path,
@@ -159,7 +204,9 @@ ON CONFLICT(session_id) DO UPDATE SET
 	input_tokens=excluded.input_tokens,
 	output_tokens=excluded.output_tokens,
 	cache_creation_tokens=excluded.cache_creation_tokens,
-	cache_read_tokens=excluded.cache_read_tokens
+	cache_read_tokens=excluded.cache_read_tokens,
+	sidechain_turns=excluded.sidechain_turns,
+	sidechain_agents=excluded.sidechain_agents
 `
 
 // Upsert inserts or updates a session and replaces its tool_uses.
@@ -176,6 +223,7 @@ func (db *DB) Upsert(s *model.Session) error {
 		s.MessageCount, s.UserMessages, s.AssistantMessages,
 		s.FirstUserMsg, s.LastUserMsg, s.GitBranch, s.ClaudeVersion, s.Model,
 		s.InputTokens, s.OutputTokens, s.CacheCreationTokens, s.CacheReadTokens,
+		s.SidechainTurns, s.SidechainAgents,
 	); err != nil {
 		return fmt.Errorf("upsert session: %w", err)
 	}
@@ -194,7 +242,8 @@ const selectSessionSQL = `
 SELECT session_id, project_dir, jsonl_path, jsonl_mtime,
 	start_time, end_time, message_count, user_messages, assistant_messages,
 	first_user_msg, last_user_msg, git_branch, claude_version, model,
-	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+	input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+	sidechain_turns, sidechain_agents
 FROM sessions`
 
 // GetByID returns a single session by ID, or sql.ErrNoRows if not found.
@@ -251,6 +300,7 @@ func scanSession(rows *sql.Rows) (*model.Session, error) {
 		&start, &end, &s.MessageCount, &s.UserMessages, &s.AssistantMessages,
 		&s.FirstUserMsg, &s.LastUserMsg, &s.GitBranch, &s.ClaudeVersion, &s.Model,
 		&s.InputTokens, &s.OutputTokens, &s.CacheCreationTokens, &s.CacheReadTokens,
+		&s.SidechainTurns, &s.SidechainAgents,
 	); err != nil {
 		return nil, err
 	}

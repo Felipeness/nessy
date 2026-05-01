@@ -4,6 +4,12 @@ package model
 import "time"
 
 // Session is the indexed view of one Claude Code conversation.
+//
+// Sidechain* fields trackeiam subagent spawns dentro da session — Claude Code
+// emite turnos com isSidechain=true e um agentId quando lança um subagent
+// (Task tool, Skill spawns, etc). Isso permite ver no TUI quais sessions
+// tiveram heavy subagent usage e separar "trabalho da main thread" de
+// "trabalho que rodou em paralelo".
 type Session struct {
 	SessionID           string         `json:"session_id"`
 	ProjectDir          string         `json:"project_dir"`
@@ -24,6 +30,10 @@ type Session struct {
 	CacheCreationTokens int64          `json:"cache_creation_tokens"`
 	CacheReadTokens     int64          `json:"cache_read_tokens"`
 	ToolCalls           map[string]int `json:"tool_calls"`
+
+	// Sidechain (subagent) tracking — agregado em parse-time.
+	SidechainTurns  int `json:"sidechain_turns"`  // total de turns com isSidechain=true
+	SidechainAgents int `json:"sidechain_agents"` // distinct agentIds
 }
 
 // Duration returns the session wall-clock duration.

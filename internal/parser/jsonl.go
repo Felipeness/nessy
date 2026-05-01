@@ -24,13 +24,15 @@ type Session = model.Session
 
 // rawEvent captures only the fields we need from any line of the JSONL.
 type rawEvent struct {
-	Type      string          `json:"type"`
-	Timestamp string          `json:"timestamp"`
-	SessionID string          `json:"sessionId"`
-	CWD       string          `json:"cwd"`
-	GitBranch string          `json:"gitBranch"`
-	Version   string          `json:"version"`
-	Message   *rawMessage     `json:"message,omitempty"`
+	Type        string      `json:"type"`
+	Timestamp   string      `json:"timestamp"`
+	SessionID   string      `json:"sessionId"`
+	CWD         string      `json:"cwd"`
+	GitBranch   string      `json:"gitBranch"`
+	Version     string      `json:"version"`
+	IsSidechain bool        `json:"isSidechain,omitempty"`
+	AgentID     string      `json:"agentId,omitempty"`
+	Message     *rawMessage `json:"message,omitempty"`
 }
 
 type rawMessage struct {
@@ -134,6 +136,7 @@ func ParseSession(path string) (*Session, error) {
 		JSONLPath: path,
 		ToolCalls: map[string]int{},
 	}
+	agentSet := map[string]struct{}{} // distinct agentIds vistos
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 
@@ -164,6 +167,13 @@ func ParseSession(path string) (*Session, error) {
 			}
 			if t.After(s.EndTime) {
 				s.EndTime = t
+			}
+		}
+		// Sidechain tracking — só conta turnos com message (skipa permission-mode etc)
+		if ev.IsSidechain && ev.Message != nil {
+			s.SidechainTurns++
+			if ev.AgentID != "" {
+				agentSet[ev.AgentID] = struct{}{}
 			}
 		}
 		switch ev.Type {
@@ -207,7 +217,66 @@ func ParseSession(path string) (*Session, error) {
 		// derive from parent dir
 		s.ProjectDir = DecodeProjectDir(filepath.Base(filepath.Dir(path)))
 	}
+	s.SidechainAgents = len(agentSet)
+
+	// Sidechains vivem em arquivos separados em <session-id>/subagents/agent-*.jsonl.
+	// Scan o diretório se existir e agrega contadores.
+	if extra := scanSidechainDir(path, s.SessionID); extra != nil {
+		s.SidechainTurns += extra.turns
+		s.SidechainAgents += extra.agents
+	}
 	return s, nil
+}
+
+// sidechainStats agrega métricas de subagent JSONLs separados.
+type sidechainStats struct {
+	turns  int
+	agents int
+}
+
+// scanSidechainDir varre <session-jsonl-dir>/<session-id>/subagents/agent-*.jsonl.
+// Cada arquivo é um subagent inteiro — conta as msgs e o agentId é único por arquivo.
+func scanSidechainDir(sessionPath, sessionID string) *sidechainStats {
+	if sessionID == "" {
+		return nil
+	}
+	subDir := filepath.Join(filepath.Dir(sessionPath), sessionID, "subagents")
+	entries, err := os.ReadDir(subDir)
+	if err != nil {
+		return nil
+	}
+	out := &sidechainStats{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(subDir, e.Name())
+		out.agents++
+		out.turns += countMessages(path)
+	}
+	return out
+}
+
+// countMessages devolve nº de events do tipo user/assistant com message != nil.
+func countMessages(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	count := 0
+	for scanner.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if (ev.Type == "user" || ev.Type == "assistant") && ev.Message != nil {
+			count++
+		}
+	}
+	return count
 }
 
 // extractText pulls searchable text de um `message.content` field. Aceita:

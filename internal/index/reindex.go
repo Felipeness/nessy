@@ -18,7 +18,9 @@ type ReindexStats struct {
 
 // parserVersion bumpa quando extractText muda — invalida FTS de todas sessions
 // e força repopular. Vai pra last_index_meta.parser_version.
-const parserVersion = "2"
+//   v2: original
+//   v3: adiciona sidechain_turns/sidechain_agents (re-Upsert metadata)
+const parserVersion = "3"
 
 // Reindex walks root looking for *.jsonl files (excluding subagents/),
 // re-parsing only those whose mtime is newer than the cached value.
@@ -27,10 +29,12 @@ func (db *DB) Reindex(root string) (ReindexStats, error) {
 	var stats ReindexStats
 	seen := map[string]bool{}
 
-	// Se parser_version mudou, nuke FTS pra forçar re-população.
+	// Se parser_version mudou, nuke FTS + força re-Upsert da metadata pra
+	// popular colunas novas (ex: sidechain_*).
 	var stored string
 	_ = db.conn.QueryRow(`SELECT value FROM last_index_meta WHERE key = 'parser_version'`).Scan(&stored)
-	if stored != parserVersion {
+	parserVersionChanged := stored != parserVersion
+	if parserVersionChanged {
 		if _, err := db.conn.Exec(`DELETE FROM messages_fts`); err != nil {
 			return stats, err
 		}
@@ -63,7 +67,7 @@ func (db *DB) Reindex(root string) (ReindexStats, error) {
 		var cachedSID string
 		row := db.conn.QueryRow(`SELECT session_id, jsonl_mtime FROM sessions WHERE jsonl_path = ?`, path)
 		scanErr := row.Scan(&cachedSID, &cachedMtime)
-		if scanErr == nil && cachedMtime == mtime {
+		if scanErr == nil && cachedMtime == mtime && !parserVersionChanged {
 			// Cache de metadata bate, mas o FTS pode estar subpopulado por
 			// versão antiga do parser. Verifica e força reindex de msgs se
 			// necessário (sem regravar metadata da session).
