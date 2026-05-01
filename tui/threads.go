@@ -381,12 +381,11 @@ func (v *threadsView) MoveCursorH(delta int) {
 	}
 }
 
-// moveCursorGalaxy escolhe o próximo node mais próximo na direção dada.
-// dx > 0 = direita, dx < 0 = esquerda; dy > 0 = baixo, dy < 0 = cima.
+// moveCursorGalaxy navega pelos nodes do galaxy.
+//   ←→ = sessão anterior/próxima cronologicamente
+//   ↑↓ = pula pra próxima/anterior thread (cicla pelas threads, lands na 1a session)
+// Sem loop: cada press de ↑/↓ avança thread index, não vai e volta.
 func (v *threadsView) moveCursorGalaxy(dx, dy int) {
-	// Galaxy precisa ter coords salvas — usa positions do último render.
-	// Como o force-directed roda a cada render, snapshotamos posições aqui
-	// rodando um layout determinístico rápido baseado em índice.
 	if v.cursor >= len(v.flat) {
 		return
 	}
@@ -394,12 +393,7 @@ func (v *threadsView) moveCursorGalaxy(dx, dy int) {
 	if curRow.session == nil {
 		return
 	}
-	// Coordenadas heurísticas: usa start_time como x, hash do project como y.
-	// Ordem cronológica natural já tá na flat list.
-	// Pra simplificar: ←→ = sessão anterior/próxima cronologicamente,
-	// ↑↓ = sessão da thread anterior/próxima na lista.
 	if dx != 0 {
-		// flat já é cronológico em galaxy view
 		next := v.cursor + sign(dx)
 		for next >= 0 && next < len(v.flat) && v.flat[next].session == nil {
 			next += sign(dx)
@@ -409,30 +403,19 @@ func (v *threadsView) moveCursorGalaxy(dx, dy int) {
 		}
 	}
 	if dy != 0 {
-		// Acha próxima session de OUTRA thread na direção
-		curThread := curRow.thread
-		next := v.cursor + sign(dy)
-		for next >= 0 && next < len(v.flat) {
-			if v.flat[next].session != nil && v.flat[next].thread != curThread {
-				v.cursor = next
-				return
-			}
-			next += sign(dy)
+		// Cicla por threads. Acha índice atual, soma delta, wrap, pula pra
+		// 1a session da nova thread.
+		curIdx := indexOfThread(v.threads, curRow.thread)
+		if curIdx < 0 {
+			return
 		}
-		// Fallback: primeiro/último válido
-		if dy > 0 {
-			for i := len(v.flat) - 1; i >= 0; i-- {
-				if v.flat[i].session != nil && v.flat[i].thread != curThread {
-					v.cursor = i
-					return
-				}
-			}
-		} else {
-			for i := 0; i < len(v.flat); i++ {
-				if v.flat[i].session != nil && v.flat[i].thread != curThread {
-					v.cursor = i
-					return
-				}
+		n := len(v.threads)
+		newIdx := (curIdx + sign(dy) + n) % n
+		newThread := v.threads[newIdx]
+		for i, row := range v.flat {
+			if row.thread == newThread && row.session != nil {
+				v.cursor = i
+				return
 			}
 		}
 	}
@@ -1238,13 +1221,16 @@ func laneLegend(threads []*stats.Thread, colors []lipgloss.Color, lane map[*stat
 // Cada thread = linha horizontal, sessions = ● ao longo do eixo X (tempo).
 // =============================================================================
 
+// renderTimeline mostra threads como rows horizontais ao longo do tempo.
+// Layout simples: [label branch] [gráfico ●─●] [count · cost].
+// Datas no topo, horas no rodapé. Cursor highlight no ◉ accent.
 func (v threadsView) renderTimeline(width int) string {
 	if len(v.threads) == 0 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
 	}
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 
-	// Find global time range
+	// Range global
 	var minT, maxT time.Time
 	for _, t := range v.threads {
 		for _, s := range t.Sessions {
@@ -1259,22 +1245,20 @@ func (v threadsView) renderTimeline(width int) string {
 	if minT.IsZero() || maxT.IsZero() {
 		return ""
 	}
-
-	// Layout: label esquerdo (project › branch), gráfico, info direita.
-	// Cabe em terminais a partir de ~80 cols.
-	labelW := 26
-	infoW := 14 // " 5sess · $2.10 "
-	timelineW := width - labelW - infoW - 4
-	if timelineW < 24 {
-		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
-			"timeline view requer terminal ≥ 70 cols — use outra view ('v')")
-	}
 	totalSpan := maxT.Sub(minT)
 	if totalSpan == 0 {
 		totalSpan = time.Hour
 	}
 
-	// Helper: time → column position no gráfico (0..timelineW-1)
+	// Layout: label esquerdo, gráfico, info direita
+	labelW := 22
+	infoW := 14
+	timelineW := width - labelW - infoW - 4
+	if timelineW < 24 {
+		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
+			"timeline view requer terminal ≥ 70 cols — use outra view ('v')")
+	}
+
 	timeToX := func(t time.Time) int {
 		ratio := float64(t.Sub(minT)) / float64(totalSpan)
 		x := int(ratio * float64(timelineW-1))
@@ -1287,7 +1271,7 @@ func (v threadsView) renderTimeline(width int) string {
 		return x
 	}
 
-	// Identifica session selecionada (pra highlight + info)
+	// Cursor
 	var selSession *model.Session
 	var selThread *stats.Thread
 	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
@@ -1296,25 +1280,9 @@ func (v threadsView) renderTimeline(width int) string {
 	}
 
 	var b strings.Builder
-
-	// Header explicativo: span + total counts
-	totalSess := 0
-	totalCost := 0.0
-	for _, t := range v.threads {
-		totalSess += len(t.Sessions)
-		totalCost += t.TotalCost
-	}
-	span := totalSpan
-	spanStr := fmtDuration(span)
-	header := fmt.Sprintf("%s  %s · %d threads · %d sessions · $%.2f",
-		muted.Render("eixo:"),
-		minT.Local().Format("02/01 15:04")+" → "+maxT.Local().Format("02/01 15:04"),
-		len(v.threads), totalSess, totalCost)
-	b.WriteString(" " + muted.Render(header) + "  " +
-		muted.Render("("+spanStr+")") + "\n")
-
-	// Day markers no topo
 	leftPad := strings.Repeat(" ", labelW+2)
+
+	// Day markers (topo) — DD/MM em cada dia do span
 	dayLine := []rune(strings.Repeat(" ", timelineW))
 	day := time.Date(minT.Year(), minT.Month(), minT.Day(), 0, 0, 0, 0, minT.Location())
 	for ; !day.After(maxT); day = day.AddDate(0, 0, 1) {
@@ -1335,25 +1303,16 @@ func (v threadsView) renderTimeline(width int) string {
 		if branch == "" {
 			branch = "(no branch)"
 		}
-		// Label = projeto curto › branch · marker se cursor
-		proj := shortPath(t.ProjectDir, mustHomeTUI())
-		// Pega só o último segmento pra economizar espaço
-		if i := strings.LastIndex(proj, "/"); i >= 0 {
-			proj = proj[i+1:]
-		}
 		threadHasCursor := selThread == t
 		marker := "  "
 		if threadHasCursor {
 			marker = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("▶ ")
 		}
-		// "proj › branch" trunca pra labelW
-		labelText := truncRight(proj+" › "+branch, labelW-3)
-		labelStr := marker + branchPill(labelText)
+		labelStr := marker + branchPill(truncRight(branch, labelW-3))
 		b.WriteString(labelStr +
 			strings.Repeat(" ", maxInt(0, labelW-lipgloss.Width(stripAnsi(labelStr)))) +
 			"  ")
 
-		// Linha de chars: ● por session, ─ entre elas (range temporal)
 		line := []rune(strings.Repeat(" ", timelineW))
 		selX := -1
 		for i, s := range t.Sessions {
@@ -1394,12 +1353,11 @@ func (v threadsView) renderTimeline(width int) string {
 			}
 		}
 		b.WriteString(colored.String())
-		// Info à direita: count + cost
 		info := fmt.Sprintf("  %3d · $%5.2f", len(t.Sessions), t.TotalCost)
 		b.WriteString(muted.Render(info) + "\n")
 	}
 
-	// Footer separator + hour markers
+	// Footer: hour markers se span pequeno
 	b.WriteString(leftPad + muted.Render(strings.Repeat("─", timelineW)) + "\n")
 	if totalSpan < 7*24*time.Hour {
 		hourLine := []rune(strings.Repeat(" ", timelineW))
@@ -1420,26 +1378,6 @@ func (v threadsView) renderTimeline(width int) string {
 			}
 		}
 		b.WriteString(leftPad + muted.Render(string(hourLine)) + "\n")
-	}
-
-	// Detalhes da session selecionada (1 linha)
-	if selSession != nil && selThread != nil {
-		dur := fmtDuration(selSession.Duration())
-		cost := "—"
-		if v.pricing != nil {
-			if c, ok := v.pricing.Cost(selSession); ok {
-				cost = fmt.Sprintf("$%.2f", c.USD)
-			}
-		}
-		title := truncRight(v.titleFor(selSession), maxInt(20, width-50))
-		detail := lipgloss.NewStyle().
-			Background(lipgloss.Color("237")).
-			Foreground(colorAccent).Bold(true).
-			Render(fmt.Sprintf(" ▶ [%s] %s · %s · %s · %s ",
-				selSession.SessionID[:8],
-				selSession.StartTime.Local().Format("02/01 15:04"),
-				dur, cost, title))
-		b.WriteString("\n" + detail + "\n")
 	}
 
 	return b.String()
@@ -1863,8 +1801,9 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		canvas.line(cx0, cy0+ringR+1, cx0, cy0+ringR+3, accentCol, false)
 	}
 
-	// Labels nos nodes — id curto da session ao lado do círculo. Evita colisão
-	// trackeando ocupação por char. Selected node ganha label completa.
+	// Labels: número sequencial em cada node (#01, #02...). A legenda embaixo
+	// mapeia número → branch · projeto · time. Selected node mostra a branch
+	// inline pra contexto rápido.
 	type charBox struct{ cx, cy, w int }
 	var occupied []charBox
 	overlaps := func(b charBox) bool {
@@ -1875,29 +1814,29 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		}
 		return false
 	}
+	// Atribui número por ordem de aparição nos nodes (cronológica nessa view)
 	for i, n := range nodes {
+		num := i + 1
 		isSel := selNode != nil && n == selNode
 		var lbl string
 		if isSel {
-			// Label rica pro selecionado: branch + sid
 			br := n.t.Branch
 			if br == "" {
 				br = "(no-br)"
 			}
-			lbl = fmt.Sprintf(" %s %s", br, n.s.SessionID[:6])
+			lbl = fmt.Sprintf(" #%02d %s", num, truncRight(br, 14))
 		} else {
-			// Pra outros: só sid curto
-			lbl = " " + n.s.SessionID[:4]
+			lbl = fmt.Sprintf(" #%02d", num)
 		}
-		// Char coords: à direita do círculo
+		// Char coords: tenta direita, depois esquerda, depois baixo
 		cx := int(n.x)/2 + n.r + 1
 		cy := int(n.y) / 4
 		w := lipgloss.Width(lbl)
-		// Tenta direita, esquerda, baixo
 		positions := []charBox{
 			{cx, cy, w},
 			{int(n.x)/2 - n.r - w, cy, w},
 			{int(n.x) / 2, cy + 1, w},
+			{int(n.x) / 2, cy - 1, w},
 		}
 		var placed *charBox
 		for _, p := range positions {
@@ -1919,38 +1858,68 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		}
 		canvas.label(placed.cx, placed.cy, lbl, col, isSel)
 		occupied = append(occupied, *placed)
-		_ = i
 	}
 
-	// Render + legend + selected info
+	// Render + legend
 	out := canvas.render()
 
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 	var legend strings.Builder
-	if selSession != nil {
-		// Highlight da session selecionada (acima da legenda)
-		when := ""
-		for _, n := range nodes {
-			if n.s.SessionID == selSession.SessionID {
-				when = n.s.StartTime.Local().Format("Mon 02/01 15:04")
+
+	// Highlight da session selecionada
+	if selNode != nil {
+		num := 0
+		for i, n := range nodes {
+			if n == selNode {
+				num = i + 1
 				break
 			}
 		}
+		when := selSession.StartTime.Local().Format("02/01 15:04")
 		legend.WriteString(lipgloss.NewStyle().
 			Background(lipgloss.Color("237")).
 			Foreground(colorAccent).Bold(true).
-			Render(fmt.Sprintf("▶ [%s] %s · %s",
-				selSession.SessionID[:8],
-				when,
-				truncRight(v.titleFor(selSession), 50))) + "\n")
+			Render(fmt.Sprintf(" ▶ #%02d  %s  %s ",
+				num, when,
+				truncRight(v.titleFor(selSession), maxInt(20, width-30)))) + "\n")
 	}
-	legend.WriteString(muted.Render("─── projetos ───") + "\n")
-	for proj, col := range projectColors {
-		short := shortPath(proj, mustHomeTUI())
-		short = truncRight(short, 40)
-		legend.WriteString("  " +
-			lipgloss.NewStyle().Foreground(col).Render("●") +
-			" " + lipgloss.NewStyle().Foreground(col).Render(short) + "\n")
+
+	// Legenda: mapeia # → contexto. 2 colunas se couber.
+	legend.WriteString(muted.Render("─── nodes ───") + "\n")
+	colW := 38
+	cols := width / colW
+	if cols < 1 {
+		cols = 1
+	}
+	for i, n := range nodes {
+		num := i + 1
+		br := n.t.Branch
+		if br == "" {
+			br = "(no-br)"
+		}
+		br = truncRight(br, 18)
+		when := n.s.StartTime.Local().Format("02/01 15:04")
+		col := projectColors[n.t.ProjectDir]
+		marker := lipgloss.NewStyle().Foreground(col).Render("●")
+		isSel := selNode != nil && n == selNode
+		numStyle := lipgloss.NewStyle().Foreground(col)
+		if isSel {
+			numStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+		}
+		entry := fmt.Sprintf("%s %s %-18s %s",
+			marker,
+			numStyle.Render(fmt.Sprintf("#%02d", num)),
+			lipgloss.NewStyle().Foreground(colorFg).Render(br),
+			muted.Render(when))
+		legend.WriteString(entry)
+		if (i+1)%cols == 0 {
+			legend.WriteString("\n")
+		} else {
+			legend.WriteString("  ")
+		}
+	}
+	if len(nodes)%cols != 0 {
+		legend.WriteString("\n")
 	}
 	return out + legend.String()
 }
