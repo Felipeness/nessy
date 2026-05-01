@@ -20,7 +20,8 @@ type ReindexStats struct {
 // e força repopular. Vai pra last_index_meta.parser_version.
 //   v2: original
 //   v3: adiciona sidechain_turns/sidechain_agents (re-Upsert metadata)
-const parserVersion = "3"
+//   v4: tool_events table populada pra loop detection
+const parserVersion = "4"
 
 // Reindex walks root looking for *.jsonl files (excluding subagents/),
 // re-parsing only those whose mtime is newer than the cached value.
@@ -99,6 +100,10 @@ func (db *DB) Reindex(root string) (ReindexStats, error) {
 		msgs, err := parser.ParseMessages(path)
 		if err == nil {
 			_ = db.IndexMessages(msgs)
+		}
+		// tool_events pra loop detection retroativa
+		if events, err := parser.ParseToolEvents(path); err == nil && len(events) > 0 {
+			_ = db.IndexToolEvents(s.SessionID, events)
 		}
 		return nil
 	})

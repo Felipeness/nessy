@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/felipeness/claude-history/internal/index"
 	"github.com/felipeness/claude-history/internal/model"
 	"github.com/felipeness/claude-history/internal/pricing"
 	"github.com/felipeness/claude-history/internal/stats"
@@ -53,6 +54,7 @@ func (p statsPeriod) days() int {
 type statsView struct {
 	sessions  []*model.Session
 	pricing   *pricing.Pricing
+	db        *index.DB // pra DetectLoops e queries SQL diretas
 	showLocal bool
 	mode      statsMode
 	period    statsPeriod
@@ -61,9 +63,9 @@ type statsView struct {
 	cache map[string]string
 }
 
-func newStatsView(sessions []*model.Session, p *pricing.Pricing) statsView {
+func newStatsView(sessions []*model.Session, p *pricing.Pricing, db *index.DB) statsView {
 	return statsView{
-		sessions: sessions, pricing: p,
+		sessions: sessions, pricing: p, db: db,
 		mode: statsModeOverview, period: periodAll,
 		cache: map[string]string{},
 	}
@@ -372,7 +374,46 @@ func (v statsView) renderDetailed(width int) string {
 		fmt.Fprintf(&b, "%s %d\n", bar, p.v)
 	}
 
+	// 🔁 Loops detectados — mesmo (tool, input) repetido ≥3× em ≤5min
+	if v.db != nil {
+		loops, err := v.db.DetectLoops(3, 300)
+		if err == nil && len(loops) > 0 {
+			b.WriteByte('\n')
+			fmt.Fprintln(&b, header.Render("🔁 Loops detectados (≥3× mesma input ≤5min)"))
+			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+			critStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+			muted := lipgloss.NewStyle().Foreground(colorMuted)
+			for i, h := range loops {
+				if i >= 8 {
+					break
+				}
+				countStyle := warnStyle
+				if h.Count >= 5 {
+					countStyle = critStyle
+				}
+				when := h.FirstAt.Local().Format("02/01 15:04")
+				fmt.Fprintf(&b, "  %s %s %s %s %s\n",
+					countStyle.Bold(true).Render(fmt.Sprintf("%d×", h.Count)),
+					lipgloss.NewStyle().Foreground(colorFg).Render(fmt.Sprintf("%-12s", h.ToolName)),
+					muted.Render(fmt.Sprintf("[%s]", h.SessionID[:8])),
+					muted.Render(when),
+					muted.Render(fmt.Sprintf("· span %s", fmtSecs(h.SpanSecs))))
+			}
+		}
+	}
+
 	return lipgloss.NewStyle().Width(width).Render(b.String())
+}
+
+// fmtSecs formata segundos em "Xs", "Xm Ys" ou "Xh Ym".
+func fmtSecs(s float64) string {
+	if s < 60 {
+		return fmt.Sprintf("%.0fs", s)
+	}
+	if s < 3600 {
+		return fmt.Sprintf("%dm%ds", int(s)/60, int(s)%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(s)/3600, (int(s)%3600)/60)
 }
 
 // =============================================================================

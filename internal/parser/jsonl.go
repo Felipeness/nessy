@@ -8,11 +8,14 @@ package parser
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -370,6 +373,126 @@ func countToolUses(raw json.RawMessage, into map[string]int) {
 		if b.Type == "tool_use" && b.Name != "" {
 			into[b.Name]++
 		}
+	}
+}
+
+// ToolEvent é um único tool_use individual, com timestamp e hash do input.
+// Usado pra loop detection retroativa.
+type ToolEvent struct {
+	SessionID string
+	Timestamp time.Time
+	ToolName  string
+	InputHash string // SHA-256 do input JSON canonicalizado
+}
+
+// ParseToolEvents lê o JSONL e devolve um event por tool_use encontrado.
+// Filtra subagents/ pra não duplicar.
+func ParseToolEvents(path string) ([]ToolEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var out []ToolEvent
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type != "assistant" || ev.Message == nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, ev.Timestamp)
+		if err != nil {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input,omitempty"`
+		}
+		if err := json.Unmarshal(ev.Message.Content, &blocks); err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" || b.Name == "" {
+				continue
+			}
+			out = append(out, ToolEvent{
+				SessionID: ev.SessionID,
+				Timestamp: t,
+				ToolName:  b.Name,
+				InputHash: hashToolInput(b.Input),
+			})
+		}
+	}
+	return out, scanner.Err()
+}
+
+// hashToolInput devolve SHA-256 do input JSON canonicalizado (chaves sorted
+// recursivamente). Garante que dois inputs equivalentes tenham mesmo hash
+// independente da ordem de keys.
+func hashToolInput(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "0"
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		// fallback: hash bytes brutos
+		sum := sha256.Sum256(raw)
+		return hex.EncodeToString(sum[:8])
+	}
+	canon, _ := canonicalJSON(v)
+	sum := sha256.Sum256(canon)
+	return hex.EncodeToString(sum[:8])
+}
+
+// canonicalJSON serializa v com chaves de map ordenadas alfabeticamente.
+func canonicalJSON(v any) ([]byte, error) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			kb, _ := json.Marshal(k)
+			b.Write(kb)
+			b.WriteByte(':')
+			vb, err := canonicalJSON(x[k])
+			if err != nil {
+				return nil, err
+			}
+			b.Write(vb)
+		}
+		b.WriteByte('}')
+		return []byte(b.String()), nil
+	case []any:
+		var b strings.Builder
+		b.WriteByte('[')
+		for i, e := range x {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			eb, err := canonicalJSON(e)
+			if err != nil {
+				return nil, err
+			}
+			b.Write(eb)
+		}
+		b.WriteByte(']')
+		return []byte(b.String()), nil
+	default:
+		return json.Marshal(v)
 	}
 }
 

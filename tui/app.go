@@ -120,7 +120,7 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		detailCtx: newDetailContext(sessions, p),
 		recent:    recent,
 		search:    search,
-		stats:     newStatsView(sessions, p),
+		stats:     newStatsView(sessions, p, db),
 		costs:     newCostsView(sessions, p),
 		timeline:  newTimelineView(sessions, p),
 		tools:     newToolsView(sessions),
@@ -178,7 +178,7 @@ func (m *Model) reload() {
 	m.detailCtx = newDetailContext(sessions, m.pricing)
 	m.recent = newRecentView(sessions, m.pricing, loadSummaries(m.db))
 	m.search = newSearchView(m.db, m.pricing, sessions)
-	m.stats = newStatsView(sessions, m.pricing)
+	m.stats = newStatsView(sessions, m.pricing, m.db)
 	m.costs = newCostsView(sessions, m.pricing)
 	m.timeline = newTimelineView(sessions, m.pricing)
 	m.tools = newToolsView(sessions)

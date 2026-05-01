@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS tool_uses (
 	PRIMARY KEY (session_id, tool_name)
 );
 
+-- tool_events: 1 row por tool_use individual (não agregado). Habilita
+-- loop detection retroativa: GROUP BY (session_id, tool_name, input_hash)
+-- HAVING count >= N AND maxts - mints < window_ns.
+CREATE TABLE IF NOT EXISTS tool_events (
+	session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+	ts INTEGER NOT NULL,
+	tool_name TEXT NOT NULL,
+	input_hash TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_tool_events_loop
+	ON tool_events(session_id, tool_name, input_hash, ts);
+CREATE INDEX IF NOT EXISTS idx_tool_events_session
+	ON tool_events(session_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 	session_id UNINDEXED,
 	role,
@@ -118,9 +132,14 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	if _, err := conn.Exec(schemaSQL); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("create schema: %w", err)
+	// Split em statements individuais — modernc.org/sqlite às vezes só roda
+	// o primeiro statement num Exec multi-statement, deixando tabelas
+	// silenciosamente faltando.
+	for _, stmt := range splitSQL(schemaSQL) {
+		if _, err := conn.Exec(stmt); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("create schema (%s): %w", firstLine(stmt), err)
+		}
 	}
 	// Migrations idempotentes — schemaSQL só cria tables/cols pra DBs novos.
 	// Pra DBs existentes precisamos ALTER TABLE on demand.
@@ -133,6 +152,39 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("set schema version: %w", err)
 	}
 	return &DB{conn: conn, path: path}, nil
+}
+
+// splitSQL quebra um bloco SQL em statements individuais, separando por ';'
+// no nível top (ignora ';' dentro de strings). Skipa whitespace + comments.
+func splitSQL(s string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "--") {
+			continue
+		}
+		cur.WriteString(line)
+		cur.WriteByte('\n')
+		if strings.HasSuffix(trim, ";") {
+			st := strings.TrimSpace(cur.String())
+			if st != "" {
+				out = append(out, st)
+			}
+			cur.Reset()
+		}
+	}
+	if rest := strings.TrimSpace(cur.String()); rest != "" {
+		out = append(out, rest)
+	}
+	return out
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // runMigrations aplica ALTER TABLE pras colunas que vieram depois de v1.
@@ -236,6 +288,85 @@ func (db *DB) Upsert(s *model.Session) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// IndexToolEvents substitui os tool_events de uma session pelos da lista.
+// Operação atômica em transação. Idempotente: chamar 2× é no-op.
+func (db *DB) IndexToolEvents(sessionID string, events []parser.ToolEvent) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM tool_events WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("clear tool_events: %w", err)
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO tool_events (session_id, ts, tool_name, input_hash) VALUES (?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, e := range events {
+		if _, err := stmt.Exec(sessionID, e.Timestamp.UnixNano(), e.ToolName, e.InputHash); err != nil {
+			return fmt.Errorf("insert tool_event: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// LoopHit representa um padrão de tool repetido suspeito.
+type LoopHit struct {
+	SessionID string
+	ToolName  string
+	InputHash string
+	Count     int
+	SpanSecs  float64 // tempo entre primeiro e último (segundos)
+	FirstAt   time.Time
+}
+
+// DetectLoops devolve padrões `count >= minCount` de mesmo (tool, input_hash)
+// numa janela <= windowSecs. Útil pra identificar agente preso em retry.
+//
+// Default: minCount=3, windowSecs=300 (3 calls iguais em ≤5min). Janela
+// curta (60s) é estrita demais pra dados retroativos — agentes lentos com
+// pause humana entre retries são "loops" práticos mesmo com gap >60s.
+// Ordena por count desc, span asc — mais "apertados" primeiro.
+func (db *DB) DetectLoops(minCount int, windowSecs float64) ([]LoopHit, error) {
+	if minCount < 2 {
+		minCount = 3
+	}
+	if windowSecs <= 0 {
+		windowSecs = 300
+	}
+	windowNs := int64(windowSecs * 1e9)
+	rows, err := db.conn.Query(`
+		SELECT session_id, tool_name, input_hash,
+		       COUNT(*) AS cnt,
+		       MIN(ts) AS first_ts,
+		       MAX(ts) - MIN(ts) AS span_ns
+		FROM tool_events
+		GROUP BY session_id, tool_name, input_hash
+		HAVING cnt >= ? AND span_ns <= ? AND span_ns > 0
+		ORDER BY cnt DESC, span_ns ASC
+		LIMIT 50
+	`, minCount, windowNs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LoopHit
+	for rows.Next() {
+		var h LoopHit
+		var firstTs, spanNs int64
+		if err := rows.Scan(&h.SessionID, &h.ToolName, &h.InputHash, &h.Count, &firstTs, &spanNs); err != nil {
+			return nil, err
+		}
+		h.FirstAt = time.Unix(0, firstTs)
+		h.SpanSecs = float64(spanNs) / 1e9
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 const selectSessionSQL = `
