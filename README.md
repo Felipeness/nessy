@@ -110,18 +110,46 @@ nessy standup --since 7d --format project
 
 ## Instalação
 
-### 1. Build
+### Opção A — npm (mais simples)
 
 ```bash
-git clone git@github.com:Felipeness/nessy ~/Desktop/Projects/nessy
-cd ~/Desktop/Projects/nessy
+npm install -g nessy
+```
+
+Funciona em macOS, Linux e Windows. O `postinstall` detecta SO/arch e baixa o binário correto do GitHub Releases.
+
+### Opção B — curl install
+
+```bash
+curl -fsSL https://github.com/Felipeness/nessy/releases/latest/download/install.sh | bash
+```
+
+Detecta SO/arch, baixa o tar.gz/zip do release mais recente, instala em `~/.local/bin/nessy`. Garante que o dir tá no PATH.
+
+### Opção C — go install (pra quem tem Go)
+
+```bash
+go install github.com/felipeness/nessy@latest
+```
+
+Requer Go 1.26+. Frontend embedado precisa ser buildado uma vez antes (`cd web && bun install && bun run build`) — alternativa: usar Opção A ou B.
+
+### Opção D — download manual
+
+Pegue o `.tar.gz` (Mac/Linux) ou `.zip` (Windows) do seu SO/arch em [Releases](https://github.com/Felipeness/nessy/releases/latest), extraia, mova `nessy` (ou `nessy.exe`) pra um dir no PATH.
+
+### Opção E — build local (dev)
+
+```bash
+git clone https://github.com/Felipeness/nessy
+cd nessy
 cd web && bun install && bun run build && cd ..
 go build -o ~/.local/bin/nessy .
 ```
 
-Garante que `~/.local/bin` está no seu PATH. Bun é necessário só pra buildar o frontend uma vez (depois fica embedded no binário Go).
+Bun necessário só pra build do frontend uma vez (depois fica embedded no binário Go).
 
-### 2. Subir o daemon
+### Subir o daemon
 
 Necessário pra Web UI, statusline live (cost/p90/burn-rate) e SSE updates:
 
@@ -131,7 +159,7 @@ nessy serve --no-open    # http://localhost:5555
 
 Roda em foreground. Pra deixar sempre ativo no boot via launchd, veja [Daemon persistente](#daemon-persistente) abaixo.
 
-### 3. Plugar o statusline no Claude Code (opcional mas recomendado)
+### Plugar o statusline no Claude Code (opcional mas recomendado)
 
 ```bash
 nessy statusline-install --preset compact
@@ -151,7 +179,7 @@ Depois **reinicia o Claude Code** — o `statusLine` só carrega no boot. Pronto
 ~/Desktop/Projects/nessy │ main↑11 │ Opus 4.7 │ ▓▓░░░░ 42% │ $0.32 │ 850 t/m
 ```
 
-### 4. Customizar o statusline visualmente
+### Customizar o statusline visualmente
 
 Abra `http://localhost:5555/#studio` no browser — drag-drop dos components, escolha de tema (graphite/nord/dracula/sakura/mono), 3 styles (plain/powerline/capsule), thresholds (warn/critical) por component, mock data pra simular cenários. Salvar persiste em `~/.nessy/statusline.toml`.
 
@@ -184,7 +212,7 @@ nessy statusline-install --uninstall
 cp ~/.claude/settings.json.bak.YYYYMMDD-HHMMSS ~/.claude/settings.json
 ```
 
-### 5. (opcional) AI features — Ollama
+### (opcional) AI features — Ollama
 
 ```bash
 ollama pull qwen2.5:7b

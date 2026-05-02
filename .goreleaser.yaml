@@ -1,0 +1,113 @@
+# GoReleaser config — build matrix + GitHub release automation.
+# Roda quando push de tag `v*` (ex: v0.1.0) via .github/workflows/release.yml.
+#
+# Pra testar localmente sem publicar:
+#   goreleaser release --snapshot --clean --skip=publish
+#
+# Pra release oficial (precisa GITHUB_TOKEN):
+#   git tag v0.1.0 && git push --tags
+#   (workflow do GH Actions chama goreleaser release --clean)
+
+version: 2
+
+before:
+  hooks:
+    # Builda o frontend Vite + embedda no binário Go via embed.go.
+    # Bun é mais rápido que npm; CI tem ambos.
+    - bash -c "cd web && bun install --frozen-lockfile && bun run build"
+
+builds:
+  - id: nessy
+    main: .
+    binary: nessy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Combinações inválidas (windows/arm64 funciona, deixar)
+    ignore: []
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: ["tar.gz"]
+    # Windows usa zip, demais tar.gz
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    # Nome: nessy_v0.1.0_darwin_arm64.tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE*
+      - README*
+      - docs/ROADMAP.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Fixes"
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: "📚 Docs"
+      regexp: '^.*?docs(\(.+\))??!?:.+$'
+      order: 2
+    - title: "🔧 Chore"
+      regexp: '^.*?chore(\(.+\))??!?:.+$'
+      order: 3
+    - title: "Other"
+      order: 999
+  filters:
+    exclude:
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: Felipeness
+    name: nessy
+  draft: false
+  # Marca release como prerelease se versão tem hyphen (ex: v0.1.0-rc.1)
+  prerelease: auto
+  header: |
+    ## Nessy {{ .Tag }}
+
+    Indexa, busca, analisa e dá feedback sobre **todas** as suas conversas do Claude Code.
+
+    ### Instalação
+
+    **npm** (mais simples):
+    ```bash
+    npm install -g nessy
+    ```
+
+    **curl**:
+    ```bash
+    curl -fsSL https://github.com/Felipeness/nessy/releases/latest/download/install.sh | bash
+    ```
+
+    **download direto**: pegue o tar.gz/zip do seu SO/arch abaixo.
+  footer: |
+    ---
+    Site: https://github.com/Felipeness/nessy

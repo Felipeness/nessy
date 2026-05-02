@@ -1,0 +1,39 @@
+{
+  "name": "nessy",
+  "version": "0.0.0",
+  "description": "Nessy — Nano Episodic Session Studio (Your): index, search and analyze all your Claude Code sessions",
+  "homepage": "https://github.com/Felipeness/nessy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Felipeness/nessy.git"
+  },
+  "bugs": "https://github.com/Felipeness/nessy/issues",
+  "author": "Felipeness",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "anthropic",
+    "session",
+    "history",
+    "search",
+    "analytics",
+    "tui",
+    "ai"
+  ],
+  "bin": {
+    "nessy": "./bin/nessy"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "install.js",
+    "bin/.gitkeep",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "preferGlobal": true
+}

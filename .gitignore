@@ -3,6 +3,14 @@
 *.test
 *.out
 
+# GoReleaser
+/dist/
+
+# npm wrapper — bin baixado em postinstall
+/npm/bin/nessy
+/npm/bin/nessy.exe
+/npm/node_modules/
+
 # OS
 .DS_Store
 

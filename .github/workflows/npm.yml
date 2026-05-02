@@ -1,0 +1,34 @@
+# Publica npm package quando release nasce.
+# Precisa do secret NPM_TOKEN configurado no repo.
+
+name: npm-publish
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  pub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org/"
+
+      - name: Sync version
+        working-directory: npm
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          node -e "const f=\"package.json\"; const p=require(\"./\"+f); p.version=process.env.VERSION; require(\"fs\").writeFileSync(f, JSON.stringify(p,null,2));"
+
+      - name: Publish to npm
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NESSY_SKIP_INSTALL: "1"
+        run: npm publish --access public

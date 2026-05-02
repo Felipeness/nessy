@@ -31,6 +31,14 @@ import (
 	"github.com/felipeness/nessy/tui"
 )
 
+// Version info — injetado em build time via ldflags pelo GoReleaser.
+// Defaults úteis pra dev local (`go build .` direto).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 const usage = `nessy — busca todas as suas conversas do Claude Code
 
 USAGE:
@@ -121,6 +129,8 @@ func main() {
 		cmdDaemonUninstall()
 	case "daemon-status":
 		cmdDaemonStatus()
+	case "-v", "--version", "version":
+		fmt.Printf("nessy %s · commit %s · built %s\n", version, commit, date)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
