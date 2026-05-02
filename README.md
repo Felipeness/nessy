@@ -113,8 +113,11 @@ nessy standup --since 7d --format project
 ### Opção A — npm (mais simples)
 
 ```bash
-npm install -g nessy
+npm install -g @felipeness/nessy
 ```
+
+> Nome scoped porque `nessy` no registry npm já tá ocupado por outro pacote.
+> O comando instalado continua sendo `nessy`.
 
 Funciona em macOS, Linux e Windows. O `postinstall` detecta SO/arch e baixa o binário correto do GitHub Releases.
 
