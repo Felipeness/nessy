@@ -66,6 +66,7 @@ type Model struct {
 	ai          aiView
 	ness        nessView
 	threads     threadsView
+	viewer      viewerState
 	aiClient    *ai.Client
 	aiWorker    *ai.Worker
 
@@ -245,6 +246,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showHelp {
 			// qualquer tecla fecha help
 			m.showHelp = false
+			return m, nil
+		}
+
+		// Viewer modal: captura todas as teclas até fechar.
+		if m.viewer.active {
+			if consumed, statusMsg := m.viewer.HandleKey(k); consumed {
+				m.viewer.statusMsg = statusMsg
+				return m, nil
+			}
+		}
+
+		// Open viewer pra session selecionada (V uppercase pra não conflitar
+		// com 'v' do Threads tab toggle de view)
+		if keyMatches(k, keys.OpenViewer) {
+			s := m.selectedForActiveTab()
+			if s != nil {
+				m.viewer.Open(s.JSONLPath, s.SessionID, m.width, m.height)
+			}
 			return m, nil
 		}
 
@@ -481,6 +500,12 @@ func (m Model) selectedForActiveTab() *model.Session {
 
 // View renders.
 func (m Model) View() string {
+	// Viewer modal — toma a tela toda, menos o status bar
+	if m.viewer.active {
+		view := m.viewer.View(m.width, m.height-1)
+		status := m.renderStatusBar()
+		return lipgloss.JoinVertical(lipgloss.Left, view, status)
+	}
 	tabBar := m.renderTabBar()
 	body := m.renderBody()
 	status := m.renderStatusBar()

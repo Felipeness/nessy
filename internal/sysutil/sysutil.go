@@ -62,6 +62,33 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 	return exec.Command("powershell", "-NoProfile", "-Command", script).Run()
 }
 
+// Clipboard copia texto pro clipboard do SO. Best-effort.
+//
+//	macOS:   pbcopy
+//	Linux:   xclip (X11) ou wl-copy (Wayland)
+//	Windows: clip
+func Clipboard(text string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return clipboardWith("pbcopy", text)
+	case "linux":
+		// Prefere wl-copy (Wayland) se disponível, senão xclip
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			return clipboardWith("wl-copy", text)
+		}
+		return clipboardWith("xclip", text, "-selection", "clipboard")
+	case "windows":
+		return clipboardWith("clip", text)
+	}
+	return fmt.Errorf("clipboard unsupported on %s", runtime.GOOS)
+}
+
+func clipboardWith(bin string, text string, extraArgs ...string) error {
+	cmd := exec.Command(bin, extraArgs...)
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
 // OpenPath abre arquivo/diretório/URL no aplicativo default do SO.
 //   macOS:   open
 //   Linux:   xdg-open

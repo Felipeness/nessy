@@ -46,6 +46,7 @@ type keymap struct {
 	ViewToggle  key.Binding
 	StatsMode   key.Binding
 	StatsPeriod key.Binding
+	OpenViewer  key.Binding
 }
 
 var keys = keymap{
@@ -93,6 +94,7 @@ var keys = keymap{
 	ViewToggle:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "[Threads] alternar view (tree/cards/...)")),
 	StatsMode:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "[Stats] alternar modo (overview/models/detailed)")),
 	StatsPeriod: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "[Stats] alternar período (all/7d/30d)")),
+	OpenViewer:  key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "abrir viewer ledger da session selecionada")),
 }
 
 func keyMatches(msgKey string, b key.Binding) bool {
