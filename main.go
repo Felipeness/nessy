@@ -387,7 +387,18 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	}
 	defer db.Close()
 
-	if _, err := db.Reindex(filepath.Join(home, ".claude", "projects")); err != nil {
+	cfg, _ := config.LoadConfig(configPath)
+	state := config.LoadState(statePath)
+
+	if _, err := db.ReindexFiltered(
+		filepath.Join(home, ".claude", "projects"),
+		index.IngestFilter{
+			SkipWarmup:      cfg.Ingest.SkipWarmup,
+			SkipClearOnly:   cfg.Ingest.SkipClearOnly,
+			MinMessages:     cfg.Ingest.MinMessages,
+			ExcludeProjects: cfg.Ingest.ExcludeProjects,
+		},
+	); err != nil {
 		fmt.Fprintln(os.Stderr, "reindex error:", err)
 	}
 
@@ -395,9 +406,6 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	if err != nil {
 		fatal(err)
 	}
-
-	cfg, _ := config.LoadConfig(configPath)
-	state := config.LoadState(statePath)
 
 	aiDeps := tui.AIDeps{}
 	if cfg.AI.Enabled {
@@ -505,18 +513,26 @@ func cmdServe(args []string) {
 	}
 	defer db.Close()
 
-	if _, err := db.Reindex(filepath.Join(home, ".claude", "projects")); err != nil {
+	cfg, _ := config.LoadConfig(filepath.Join(cacheDir, "config.toml"))
+	if noAI {
+		cfg.AI.Enabled = false
+	}
+
+	if _, err := db.ReindexFiltered(
+		filepath.Join(home, ".claude", "projects"),
+		index.IngestFilter{
+			SkipWarmup:      cfg.Ingest.SkipWarmup,
+			SkipClearOnly:   cfg.Ingest.SkipClearOnly,
+			MinMessages:     cfg.Ingest.MinMessages,
+			ExcludeProjects: cfg.Ingest.ExcludeProjects,
+		},
+	); err != nil {
 		fmt.Fprintln(os.Stderr, "reindex error:", err)
 	}
 
 	p, err := pricing.Load(pricingPath)
 	if err != nil {
 		fatal(err)
-	}
-
-	cfg, _ := config.LoadConfig(filepath.Join(cacheDir, "config.toml"))
-	if noAI {
-		cfg.AI.Enabled = false
 	}
 	if aiModelOverride != "" {
 		cfg.AI.GenModel = aiModelOverride

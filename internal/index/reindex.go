@@ -25,10 +25,47 @@ type ReindexStats struct {
 //   v6: session_files + resolved_at_turn (Studio Meta tab)
 const parserVersion = "6"
 
+// IngestFilter define quais sessions skipar durante reindex. Zero-value =
+// indexa tudo (back-compat com chamadas antigas Reindex).
+type IngestFilter struct {
+	SkipWarmup      bool     // skip "I am Claude Code..."
+	SkipClearOnly   bool     // skip sessions /clear-only
+	MinMessages     int      // skip < N msgs (0 = sem filtro)
+	ExcludeProjects []string // path substrings — qualquer match skipa
+}
+
+func (f IngestFilter) shouldSkip(s *parser.Session) bool {
+	if f.MinMessages > 0 && s.MessageCount < f.MinMessages {
+		return true
+	}
+	if f.SkipWarmup && parser.IsWarmup(s) {
+		return true
+	}
+	if f.SkipClearOnly && parser.IsClearOnly(s) {
+		return true
+	}
+	for _, ex := range f.ExcludeProjects {
+		if ex == "" {
+			continue
+		}
+		if strings.Contains(s.ProjectDir, ex) {
+			return true
+		}
+	}
+	return false
+}
+
 // Reindex walks root looking for *.jsonl files (excluding subagents/),
 // re-parsing only those whose mtime is newer than the cached value.
 // Sessions whose JSONL no longer exists on disk are deleted.
+// Sem filter — back-compat com callers antigos.
 func (db *DB) Reindex(root string) (ReindexStats, error) {
+	return db.ReindexFiltered(root, IngestFilter{})
+}
+
+// ReindexFiltered roda reindex aplicando o filter — skipped sessions são
+// nem indexadas nem mantidas (deletadas se já existiam).
+func (db *DB) ReindexFiltered(root string, filter IngestFilter) (ReindexStats, error) {
 	var stats ReindexStats
 	seen := map[string]bool{}
 
@@ -93,6 +130,12 @@ func (db *DB) Reindex(root string) (ReindexStats, error) {
 
 		s, err := parser.ParseSession(path)
 		if err != nil || s == nil || s.MessageCount == 0 {
+			return nil
+		}
+		// Aplica ingest filter — skipa warmup/clear/excluded paths
+		if filter.shouldSkip(s) {
+			// Se já existia no DB, deleta (config mudou e sessão virou ineligível)
+			_, _ = db.conn.Exec(`DELETE FROM sessions WHERE jsonl_path = ?`, path)
 			return nil
 		}
 		s.JSONLMtime = info.ModTime()

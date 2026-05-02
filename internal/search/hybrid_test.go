@@ -87,6 +87,47 @@ func TestMergeRRF_WeightsBM25Heavy(t *testing.T) {
 	}
 }
 
+func TestIsUUID(t *testing.T) {
+	cases := []struct {
+		q    string
+		want bool
+	}{
+		{"19a6a4ba-bb2a-443f-a12e-a74794031ed5", true},
+		{"19A6A4BA-BB2A-443F-A12E-A74794031ED5", true},
+		{"abc", false},
+		{"19a6a4ba-bb2a-443f-a12e", false},
+		{"19a6a4ba-bb2a-443f-a12e-a74794031ed5x", false},
+		{"19a6a4baxbb2a443fa12ea74794031ed5", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsUUID(c.q); got != c.want {
+			t.Errorf("IsUUID(%q) = %v, want %v", c.q, got, c.want)
+		}
+	}
+}
+
+func TestIsUUIDPrefix(t *testing.T) {
+	cases := []struct {
+		q    string
+		want bool
+	}{
+		{"19a6a4ba", true},
+		{"19a6a4ba-bb2a", true},
+		{"19a6a4ba-bb2a-443f-a12e-a74794031ed5", true},
+		{"abc", false},
+		{"abcdef12", true},
+		{"the auth bug", false},
+		{"19a6a4ba_bb2a", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsUUIDPrefix(c.q); got != c.want {
+			t.Errorf("IsUUIDPrefix(%q) = %v, want %v", c.q, got, c.want)
+		}
+	}
+}
+
 func TestMergeRRF_TieBreakerStable(t *testing.T) {
 	// 2 ids com ranks idênticos em fontes idênticas → tiebreak por id asc
 	rankings := map[string][]string{

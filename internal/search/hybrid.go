@@ -111,6 +111,55 @@ type Hit struct {
 	Ranks map[string]int
 }
 
+// IsUUID devolve true se a query parece um session UUID (8-4-4-4-12 hex).
+// raine/claude-history detecta isso mas não wira ao path; nessy roteia
+// pra direct jump quando user cola UUID no search.
+func IsUUID(q string) bool {
+	q = strings.TrimSpace(q)
+	parts := strings.Split(q, "-")
+	if len(parts) != 5 {
+		return false
+	}
+	expectedLens := []int{8, 4, 4, 4, 12}
+	for i, p := range parts {
+		if len(p) != expectedLens[i] {
+			return false
+		}
+		for _, c := range p {
+			if !isHex(byte(c)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// IsUUIDPrefix devolve true se q é prefix de UUID (≥6 hex chars contínuos
+// ou parte com dashes nas posições corretas). Pra search por "abc12345".
+func IsUUIDPrefix(q string) bool {
+	q = strings.TrimSpace(q)
+	if len(q) < 6 || len(q) > 36 {
+		return false
+	}
+	for i, c := range q {
+		// Posições 8, 13, 18, 23 só aceitam '-' (estrutura UUID)
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !isHex(byte(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHex(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
 // MergeRRF combina múltiplos rankings de session_ids via RRF.
 //
 //	rankings: map source → []sessionID ordenado por relevância (rank 1 = melhor)

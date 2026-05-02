@@ -26,6 +26,7 @@ import (
 	"github.com/felipeness/nessy/internal/model"
 	"github.com/felipeness/nessy/internal/parser"
 	"github.com/felipeness/nessy/internal/pricing"
+	"github.com/felipeness/nessy/internal/search"
 )
 
 // cliCtx carrega tudo que os subcomandos novos precisam — DB, pricing, config,
@@ -61,14 +62,23 @@ func loadCLICtx(noAI bool) (*cliCtx, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, _ := config.LoadConfig(filepath.Join(cacheDir, "config.toml"))
 	// Reindex incremental no boot — comandos CLI sempre veem dado fresco.
-	_, _ = db.Reindex(filepath.Join(home, ".claude", "projects"))
+	// Aplica ingest filter do config pra excluir warmup/clear/excluded projects.
+	_, _ = db.ReindexFiltered(
+		filepath.Join(home, ".claude", "projects"),
+		index.IngestFilter{
+			SkipWarmup:      cfg.Ingest.SkipWarmup,
+			SkipClearOnly:   cfg.Ingest.SkipClearOnly,
+			MinMessages:     cfg.Ingest.MinMessages,
+			ExcludeProjects: cfg.Ingest.ExcludeProjects,
+		},
+	)
 
 	p, err := pricing.Load(pricingPath)
 	if err != nil {
 		return nil, err
 	}
-	cfg, _ := config.LoadConfig(filepath.Join(cacheDir, "config.toml"))
 
 	c := &cliCtx{
 		db:         db,
@@ -229,9 +239,10 @@ func cmdSimilar(args []string) {
 // =============================================================================
 
 func cmdSearchCLI(args []string) {
-	flags, positional := parseFlags(args, map[string]bool{"json": true, "all": true})
+	flags, positional := parseFlags(args, map[string]bool{"json": true, "all": true, "explain": true})
 	if len(positional) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: nessy search <query> [--mode hybrid|body|meta|sim] [--all] [--json]")
+		fmt.Fprintln(os.Stderr, "usage: nessy search <query> [--mode hybrid|body|meta|sim] [--all] [--json] [--explain]")
+		fmt.Fprintln(os.Stderr, "       nessy search <uuid|prefix>  # jump direto pra session")
 		os.Exit(1)
 	}
 	query := strings.Join(positional, " ")
@@ -244,12 +255,30 @@ func cmdSearchCLI(args []string) {
 		all = false
 	}
 	_, asJSON := flags["json"]
+	_, explain := flags["explain"]
 
 	ctx, err := loadCLICtx(false)
 	if err != nil {
 		fatal(err)
 	}
 	defer ctx.db.Close()
+
+	// UUID jump: se query é UUID-shape (full ou prefix), tenta achar session
+	// direto. raine tem detecção mas não wira; nessy roteia.
+	if search.IsUUID(query) || search.IsUUIDPrefix(query) {
+		if hit := jumpToSessionByUUID(ctx.db, query); hit != nil {
+			if asJSON {
+				emitJSON(hit)
+				return
+			}
+			fmt.Printf("→ %s\n", hit.SessionID)
+			fmt.Printf("  %s\n", hit.ProjectDir)
+			fmt.Printf("  %s\n", hit.FirstUserMsg)
+			fmt.Printf("\nRetomar:\n  cd %q && claude --resume %s\n", hit.ProjectDir, hit.SessionID)
+			return
+		}
+		// fall-through pra search normal se UUID não bater
+	}
 
 	// metadata = substring em vários campos; body = FTS5
 	all_, _ := ctx.db.ListSessions()
@@ -282,6 +311,37 @@ func cmdSearchCLI(args []string) {
 			uniq = append(uniq, r)
 		}
 		results = uniq
+	}
+
+	// --explain: anota cada hit com query type + rank por source
+	if explain {
+		qt := search.DetectQueryType(query)
+		qtName := []string{"hybrid", "bm25_heavy", "dense_heavy"}[qt]
+		weights := search.WeightsFor(qt)
+		// Rank por sessionID em ordem de aparição (proxy pra ordem de relevância)
+		rankInResults := map[string]int{}
+		for i, r := range results {
+			if _, ok := rankInResults[r.SessionID]; !ok {
+				rankInResults[r.SessionID] = i + 1
+			}
+		}
+		if asJSON {
+			emitJSON(map[string]any{
+				"query":      query,
+				"query_type": qtName,
+				"weights":    weights,
+				"results":    results,
+				"hits":       len(results),
+			})
+			return
+		}
+		fmt.Printf("query: %q · type: %s · weights=%v · %d hits\n\n",
+			query, qtName, weights, len(results))
+		for _, r := range results {
+			fmt.Printf("  rank=%d  [%s]  %s\n  %s\n\n",
+				rankInResults[r.SessionID], r.SessionID[:8], r.Role, r.Snippet)
+		}
+		return
 	}
 
 	if asJSON {
@@ -969,6 +1029,28 @@ func sqrtFCli(x float64) float64 {
 
 // parser usage ref pra evitar unused import quando compila
 var _ = parser.ListSessions
+
+// jumpToSessionByUUID procura session por UUID full ou prefix.
+// Devolve nil se não bater (caller faz fallback pra search normal).
+func jumpToSessionByUUID(db *index.DB, q string) *model.Session {
+	q = strings.ToLower(strings.TrimSpace(q))
+	all, err := db.ListSessions()
+	if err != nil {
+		return nil
+	}
+	// Match exato primeiro, depois prefix
+	for _, s := range all {
+		if strings.ToLower(s.SessionID) == q {
+			return s
+		}
+	}
+	for _, s := range all {
+		if strings.HasPrefix(strings.ToLower(s.SessionID), q) {
+			return s
+		}
+	}
+	return nil
+}
 
 // cmdAdviseCLI roda o advisor (rule-based) e formata pra terminal/JSON.
 func cmdAdviseCLI(args []string) {

@@ -466,6 +466,42 @@ func ParseToolEvents(path string) ([]ToolEvent, error) {
 	return out, scanner.Err()
 }
 
+// IsWarmup devolve true se a session é uma "warmup" (Claude Code abre uma
+// session vazia com prompt inicial fake antes de o user digitar). Detectada
+// por palavras inequívocas no FirstUserMsg.
+func IsWarmup(s *Session) bool {
+	if s == nil || s.FirstUserMsg == "" {
+		return false
+	}
+	low := strings.ToLower(s.FirstUserMsg)
+	signals := []string{
+		"i am claude code",
+		"warmup",
+		"hi claude",
+		"hello claude code",
+	}
+	for _, sig := range signals {
+		if strings.Contains(low, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsClearOnly devolve true se a session só contém /clear ou similares
+// (sem trabalho real). Heurística: ≤2 user msgs e todas casam pattern "/clear".
+func IsClearOnly(s *Session) bool {
+	if s == nil || s.UserMessages > 2 {
+		return false
+	}
+	if s.FirstUserMsg == "" {
+		return false
+	}
+	low := strings.ToLower(strings.TrimSpace(s.FirstUserMsg))
+	return low == "/clear" || strings.HasPrefix(low, "/clear ") ||
+		low == "/compact" || strings.HasPrefix(low, "/compact ")
+}
+
 // hasResolvedSignal devolve true se a msg do user tem palavras-chave positivas.
 // Conservador — false negatives são preferíveis a false positives.
 func hasResolvedSignal(text string) bool {

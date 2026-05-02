@@ -24,6 +24,13 @@ type Config struct {
 		EmbedModel   string `toml:"embed_model" json:"embed_model"`
 		AutoGenerate bool   `toml:"auto_generate" json:"auto_generate"`
 	} `toml:"ai" json:"ai"`
+	// Ingest — filtros aplicados durante reindex pra excluir lixo.
+	Ingest struct {
+		SkipWarmup     bool     `toml:"skip_warmup" json:"skip_warmup"`         // sessions com primeira msg "I am Claude Code..."
+		SkipClearOnly  bool     `toml:"skip_clear_only" json:"skip_clear_only"` // só /clear msgs
+		MinMessages    int      `toml:"min_messages" json:"min_messages"`       // skip < N msgs
+		ExcludeProjects []string `toml:"exclude_projects" json:"exclude_projects"` // path substrings a ignorar
+	} `toml:"ingest" json:"ingest"`
 	// Notify — controla notificações do watcher de loops.
 	Notify struct {
 		Enabled      bool     `toml:"enabled" json:"enabled"`
@@ -54,6 +61,10 @@ func DefaultConfig() *Config {
 	c.AI.GenModel = "qwen2.5:7b"
 	c.AI.EmbedModel = "nomic-embed-text"
 	c.AI.AutoGenerate = true
+	// Ingest: defaults razoáveis pra reduzir lixo no índice.
+	c.Ingest.SkipWarmup = true
+	c.Ingest.SkipClearOnly = true
+	c.Ingest.MinMessages = 1
 	// Notify: opt-in. Por default não notifica — ligar via Studio quando
 	// quiser. Default era true mas ficava barulhento demais.
 	c.Notify.Enabled = false
