@@ -1,5 +1,17 @@
-# Publica npm package quando release nasce.
-# Precisa do secret NPM_TOKEN configurado no repo.
+# Publica npm packages quando GitHub Release nasce.
+#
+# Pipeline:
+#   1. publish-platforms (matrix 6×): baixa binario do Release pro SO/arch,
+#      copia pra npm/platforms/<plat>-<arch>/bin/, sincroniza versao,
+#      `npm publish` da platform package.
+#   2. publish-main: depois das 6 platform packages, sincroniza versao do
+#      main package + versoes em optionalDependencies, `npm publish`.
+#
+# Repo pode ser privado: binarios moram nas platform packages no npm registry,
+# nao em GitHub Releases publicos. (Releases ainda sao usadas como source dos
+# artifacts para o CI baixar — o token GITHUB_TOKEN ja tem permissao no proprio repo.)
+#
+# Secret necessario: NPM_TOKEN (Automation token de npmjs.com)
 
 name: npm-publish
 
@@ -8,8 +20,48 @@ on:
     types: [published]
 
 jobs:
-  pub:
+  publish-platforms:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - npm_os: darwin
+            npm_cpu: arm64
+            go_os: darwin
+            go_arch: arm64
+            ext: tar.gz
+            bin: nessy
+          - npm_os: darwin
+            npm_cpu: x64
+            go_os: darwin
+            go_arch: amd64
+            ext: tar.gz
+            bin: nessy
+          - npm_os: linux
+            npm_cpu: arm64
+            go_os: linux
+            go_arch: arm64
+            ext: tar.gz
+            bin: nessy
+          - npm_os: linux
+            npm_cpu: x64
+            go_os: linux
+            go_arch: amd64
+            ext: tar.gz
+            bin: nessy
+          - npm_os: win32
+            npm_cpu: arm64
+            go_os: windows
+            go_arch: arm64
+            ext: zip
+            bin: nessy.exe
+          - npm_os: win32
+            npm_cpu: x64
+            go_os: windows
+            go_arch: amd64
+            ext: zip
+            bin: nessy.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -19,16 +71,78 @@ jobs:
           registry-url: "https://registry.npmjs.org/"
 
       - name: Sync version
-        working-directory: npm
         env:
           TAG: ${{ github.event.release.tag_name }}
+        working-directory: npm/platforms/${{ matrix.npm_os }}-${{ matrix.npm_cpu }}
         run: |
-          VERSION="${TAG#v}"
-          node -e "const f=\"package.json\"; const p=require(\"./\"+f); p.version=process.env.VERSION; require(\"fs\").writeFileSync(f, JSON.stringify(p,null,2));"
+          export VERSION="${TAG#v}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
 
-      - name: Publish to npm
+      - name: Download binary from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ASSET="nessy_${VERSION}_${{ matrix.go_os }}_${{ matrix.go_arch }}.${{ matrix.ext }}"
+          DEST="npm/platforms/${{ matrix.npm_os }}-${{ matrix.npm_cpu }}/bin"
+
+          mkdir -p "$DEST" /tmp/nessy_extract
+          gh release download "$TAG" -p "$ASSET" -R "${{ github.repository }}" -O "/tmp/$ASSET"
+
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            unzip -q "/tmp/$ASSET" -d /tmp/nessy_extract
+          else
+            tar -xzf "/tmp/$ASSET" -C /tmp/nessy_extract
+          fi
+
+          mv "/tmp/nessy_extract/${{ matrix.bin }}" "$DEST/${{ matrix.bin }}"
+          chmod +x "$DEST/${{ matrix.bin }}" || true
+          ls -la "$DEST"
+
+      - name: Publish platform package
+        working-directory: npm/platforms/${{ matrix.npm_os }}-${{ matrix.npm_cpu }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+  publish-main:
+    runs-on: ubuntu-latest
+    needs: publish-platforms
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org/"
+
+      - name: Sync version (main + optionalDependencies)
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        working-directory: npm
+        run: |
+          export VERSION="${TAG#v}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const v = process.env.VERSION;
+            pkg.version = v;
+            for (const k of Object.keys(pkg.optionalDependencies || {})) {
+              pkg.optionalDependencies[k] = v;
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          cat package.json
+
+      - name: Publish main package
         working-directory: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NESSY_SKIP_INSTALL: "1"
         run: npm publish --access public

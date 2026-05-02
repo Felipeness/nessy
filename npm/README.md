@@ -7,14 +7,21 @@ Wrapper npm pro binário Go em [Felipeness/nessy](https://github.com/Felipeness/
 ## Instalação
 
 ```bash
-npm install -g nessy
+npm install -g @felipeness/nessy
+# ou pnpm add -g @felipeness/nessy
+# ou yarn global add @felipeness/nessy
+# ou bun add -g @felipeness/nessy
 ```
 
-O `postinstall` detecta seu SO/arch e baixa o binário correto do GitHub Releases. Suporta:
+O npm instala automaticamente apenas a `optionalDependency` que casa com seu SO/arch (`@felipeness/nessy-<os>-<cpu>`), que contém o binário nativo. Sem postinstall, sem download em runtime, sem rede.
 
-- macOS (darwin amd64/arm64)
-- Linux (amd64/arm64)
-- Windows (amd64/arm64)
+Plataformas suportadas:
+
+- macOS (`darwin` arm64/x64)
+- Linux (`linux` arm64/x64)
+- Windows (`win32` arm64/x64)
+
+> Se seu gestor de pacotes estiver com optional deps desligado (`--no-optional` / `--omit=optional`), o `nessy` vai imprimir um erro orientando a reinstalar.
 
 ## Uso rápido
 

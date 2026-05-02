@@ -1,0 +1,5 @@
+# Forca LF no shim node do npm — shebang `#!/usr/bin/env node` quebra
+# em Linux/macOS se for armazenado com CRLF. Outras regras de line-ending
+# ficam pro futuro (.gitattributes pode ser ampliado depois sem renormalizar).
+
+/npm/bin/nessy text eol=lf

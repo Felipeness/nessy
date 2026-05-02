@@ -1,0 +1,46 @@
+#!/usr/bin/env node
+// Shim: localiza o binário Go na platform package correspondente ao SO/arch
+// do usuário (instalada via optionalDependencies do main package) e executa.
+// Sem download, sem postinstall, sem rede — o binário já chegou via npm.
+
+const { spawn } = require("child_process");
+
+const platform = process.platform;
+const arch = process.arch;
+const pkg = `@felipeness/nessy-${platform}-${arch}`;
+const binName = platform === "win32" ? "nessy.exe" : "nessy";
+
+let binPath;
+try {
+  binPath = require.resolve(`${pkg}/bin/${binName}`);
+} catch (err) {
+  console.error(
+    `Nessy: platform package ${pkg} não foi instalado.\n` +
+    `\n` +
+    `Causas possíveis:\n` +
+    `  - SO/arch não suportado (suportados: darwin/linux/win32 × arm64/x64)\n` +
+    `  - npm/pnpm/yarn rodou com --no-optional / --omit=optional\n` +
+    `\n` +
+    `Tente reinstalar incluindo optionalDependencies:\n` +
+    `  npm install -g @felipeness/nessy --include=optional\n`
+  );
+  process.exit(1);
+}
+
+const child = spawn(binPath, process.argv.slice(2), {
+  stdio: "inherit",
+  windowsHide: false,
+});
+
+child.on("error", (err) => {
+  console.error(`Nessy: falha ao executar ${binPath}: ${err.message}`);
+  process.exit(1);
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+  } else {
+    process.exit(code ?? 0);
+  }
+});

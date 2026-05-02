@@ -22,18 +22,22 @@
     "ai"
   ],
   "bin": {
-    "nessy": "./bin/nessy"
-  },
-  "scripts": {
-    "postinstall": "node install.js"
+    "nessy": "bin/nessy"
   },
   "files": [
-    "install.js",
-    "bin/.gitkeep",
+    "bin/nessy",
     "README.md"
   ],
   "engines": {
     "node": ">=18"
   },
-  "preferGlobal": true
+  "preferGlobal": true,
+  "optionalDependencies": {
+    "@felipeness/nessy-darwin-arm64": "0.0.0",
+    "@felipeness/nessy-darwin-x64": "0.0.0",
+    "@felipeness/nessy-linux-arm64": "0.0.0",
+    "@felipeness/nessy-linux-x64": "0.0.0",
+    "@felipeness/nessy-win32-arm64": "0.0.0",
+    "@felipeness/nessy-win32-x64": "0.0.0"
+  }
 }

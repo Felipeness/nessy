@@ -1,0 +1,18 @@
+{
+  "name": "@felipeness/nessy-darwin-arm64",
+  "version": "0.0.0",
+  "description": "macOS arm64 (Apple Silicon) binary for @felipeness/nessy",
+  "homepage": "https://github.com/Felipeness/nessy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Felipeness/nessy.git"
+  },
+  "license": "MIT",
+  "author": "Felipeness",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/nessy"],
+  "engines": {
+    "node": ">=18"
+  }
+}

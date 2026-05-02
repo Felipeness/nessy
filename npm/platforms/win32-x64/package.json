@@ -1,0 +1,18 @@
+{
+  "name": "@felipeness/nessy-win32-x64",
+  "version": "0.0.0",
+  "description": "Windows x64 binary for @felipeness/nessy",
+  "homepage": "https://github.com/Felipeness/nessy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Felipeness/nessy.git"
+  },
+  "license": "MIT",
+  "author": "Felipeness",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/nessy.exe"],
+  "engines": {
+    "node": ">=18"
+  }
+}
