@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -588,7 +589,9 @@ func (m Model) tabHint() string {
 	case tabNess:
 		return "chat com seu segundo cérebro · [enter] enviar  [ctrl+l] limpar conversa" + tail
 	case tabThreads:
-		return "threads (cwd+branch+gap)  [v] view  [↑↓] nav  [←→] miller pane / galaxy lateral  [enter] retomar" + tail
+		// Threads tem seu proprio status header com badges + nav hints — outer
+		// hint duplicava info. So o tail (ajuda/refresh/sair) que e universal.
+		return strings.TrimSpace(tail)
 	}
 	return tail
 }

@@ -672,9 +672,28 @@ func (db *DB) ListSessions() ([]*model.Session, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// Carrega tool_uses de TODAS as sessions numa unica query — antes era N+1
+	// (1 query por session). Em DBs com 100+ sessions isso somava centenas de
+	// ms no startup do TUI.
+	toolRows, err := db.conn.Query(`SELECT session_id, tool_name, count FROM tool_uses`)
+	if err != nil {
+		return out, nil // tool_calls é opcional, não falha o list
+	}
+	allTools := map[string]map[string]int{}
+	for toolRows.Next() {
+		var sid, name string
+		var count int
+		if err := toolRows.Scan(&sid, &name, &count); err == nil {
+			if allTools[sid] == nil {
+				allTools[sid] = map[string]int{}
+			}
+			allTools[sid][name] = count
+		}
+	}
+	toolRows.Close()
 	for _, s := range out {
-		if err := db.loadToolCalls(s); err != nil {
-			return nil, err
+		if t, ok := allTools[s.SessionID]; ok {
+			s.ToolCalls = t
 		}
 	}
 	return out, nil
