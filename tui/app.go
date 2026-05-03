@@ -435,6 +435,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMatches(k, keys.ViewToggle):
 			if m.activeTab == tabThreads {
 				m.threads.ToggleView()
+				// tea.ClearScreen forca repaint full do alt buffer — sem isso
+				// Windows Terminal as vezes nao limpa cells do frame anterior
+				// na transicao entre split (cards/tree) e fullwidth (miller/
+				// graph/galaxy), deixando viewStrip antigo + UUID leak visivel.
+				return m, tea.ClearScreen
 			}
 			return m, nil
 		case keyMatches(k, keys.Up):

@@ -1504,12 +1504,19 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		canvas[i] = make([]galaxyCell, plotW)
 	}
 
-	// 1. Posiciona project clusters em circulo ao redor do centro
+	// 1. Posiciona project clusters em ELIPSE ao redor do centro — uso radii
+	// separados pra X e Y porque terminal tem aspect ratio ~2:1 (celulas quase
+	// duas vezes mais altas que largas). Antes clusterR usava min(cx,cy)*0.65,
+	// que com plotH=47 ficava ~15 cells, espremendo todo galaxy num cantinho.
 	cx := float64(plotW) / 2
 	cy := float64(plotH) / 2
-	clusterR := math.Min(cx, cy) * 0.65
-	if clusterR < 8 {
-		clusterR = 8
+	clusterRX := float64(plotW) * 0.40
+	clusterRY := float64(plotH) * 0.40
+	if clusterRX < 12 {
+		clusterRX = 12
+	}
+	if clusterRY < 6 {
+		clusterRY = 6
 	}
 	type pos struct{ x, y float64 }
 	clusterCenter := map[string]pos{}
@@ -1519,13 +1526,13 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		for i, d := range dirs {
 			theta := 2 * math.Pi * float64(i) / float64(len(dirs))
 			clusterCenter[d] = pos{
-				x: cx + clusterR*math.Cos(theta),
-				y: cy + clusterR*math.Sin(theta)*0.5, // achatado (term aspect ratio 2:1)
+				x: cx + clusterRX*math.Cos(theta),
+				y: cy + clusterRY*math.Sin(theta),
 			}
 		}
 	}
 
-	// 2. Posiciona threads dentro de cada cluster — em mini-circulo pequeno
+	// 2. Posiciona threads dentro de cada cluster — mini-elipse, mesmo principio
 	type threadPos struct {
 		t   *stats.Thread
 		pos pos
@@ -1542,10 +1549,10 @@ func (v threadsView) renderGalaxy(width, height int) string {
 			aj := sortedT[j].Sessions[len(sortedT[j].Sessions)-1].StartTime
 			return ai.After(aj)
 		})
-		miniR := 4.0
-		if len(sortedT) > 4 {
-			miniR = math.Min(8.0, 3.0+float64(len(sortedT))*0.5)
-		}
+		// Mini radii — escala com numero de threads, mas limitado pra nao
+		// invadir o cluster vizinho. Se cluster tem 1 thread, fica no centro.
+		miniRX := math.Min(clusterRX*0.4, 3.0+float64(len(sortedT))*0.8)
+		miniRY := math.Min(clusterRY*0.4, 1.5+float64(len(sortedT))*0.4)
 		for i, t := range sortedT {
 			var p pos
 			if len(sortedT) == 1 {
@@ -1553,8 +1560,8 @@ func (v threadsView) renderGalaxy(width, height int) string {
 			} else {
 				theta := 2 * math.Pi * float64(i) / float64(len(sortedT))
 				p = pos{
-					x: center.x + miniR*math.Cos(theta),
-					y: center.y + miniR*math.Sin(theta)*0.5,
+					x: center.x + miniRX*math.Cos(theta),
+					y: center.y + miniRY*math.Sin(theta),
 				}
 			}
 			tp := threadPos{t, p}
