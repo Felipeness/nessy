@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -1451,162 +1452,174 @@ func (v threadsView) renderTimeline(width int) string {
 // =============================================================================
 
 
-// renderGalaxy: scatter plot tempo × custo. Cada session é um ponto colorido
-// pelo projeto; eixo X é tempo (30d → hoje), eixo Y é custo (log-scale).
-// Substituiu a versao force-directed Braille que ficava ilegivel — esse e
-// determinístico, lê de cima→baixo (mais caro) e esquerda→direita (mais antigo).
+// renderGalaxy: network graph dos threads. Cada thread = 1 nodo (●), threads
+// do mesmo projeto agrupadas em "constelacoes" radiantes. Edges conectam threads
+// adjacentes do mesmo projeto. Layout deterministico (sem force-directed): cada
+// projeto vira um cluster centrado num ponto distribuido em circulo, threads
+// radiam do centro do cluster por idade (mais novo perto do centro).
 func (v threadsView) renderGalaxy(width, height int) string {
 	if len(v.threads) == 0 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
 	}
-	if width < 50 || height < 10 {
+	if width < 50 || height < 12 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
-			"galaxy view requer terminal ≥ 50×10")
+			"galaxy view requer terminal ≥ 50×12")
 	}
 
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 
-	// Cores por projeto — paleta limitada, repete se muitos projetos
+	// Cores por projeto
 	projectColors := map[string]lipgloss.Color{}
 	palette := []lipgloss.Color{
 		"#7dd3fc", "#fbbf24", "#f472b6", "#34d399",
 		"#60a5fa", "#a78bfa", "#fb7185", "#84cc16",
 	}
-	for _, t := range v.threads {
-		if _, ok := projectColors[t.ProjectDir]; !ok {
-			projectColors[t.ProjectDir] = palette[len(projectColors)%len(palette)]
-		}
+	// Ordena projetos pra atribuicao deterministica de cor + posicao
+	grouped := stats.GroupByProject(v.threads)
+	dirs := stats.SortedProjectDirs(grouped)
+	for i, d := range dirs {
+		projectColors[d] = palette[i%len(palette)]
 	}
 
-	// Coleta sessions com custo. Bounds: 30 dias atrás → agora, 0 → maxCost.
-	type point struct {
-		s    *stats.ThreadSession
-		t    *stats.Thread
-		cost float64
-		when time.Time
+	// Plot area: reserva 1 linha header + 1 selInfo + 1 legend
+	plotH := height - 3
+	plotW := width
+	if plotH < 8 {
+		plotH = 8
 	}
-	now := time.Now()
-	minTime := now.Add(-30 * 24 * time.Hour)
-	var points []point
-	maxCost := 0.0
-	for _, t := range v.threads {
-		for _, s := range t.Sessions {
-			if s.StartTime.Before(minTime) {
-				continue
-			}
-			cost := 0.0
-			if v.pricing != nil {
-				if c, ok := v.pricing.Cost(s.Session); ok {
-					cost = c.USD
-				}
-			}
-			if cost > maxCost {
-				maxCost = cost
-			}
-			points = append(points, point{s: s, t: t, cost: cost, when: s.StartTime})
-		}
-	}
-	if len(points) == 0 {
-		return muted.Padding(2).Render("(nenhuma session nos últimos 30 dias)")
-	}
-	if maxCost <= 0 {
-		maxCost = 0.01
+	if plotW < 40 {
+		plotW = 40
 	}
 
-	// Reserva colunas pra Y-axis label (4 chars: "$100" ou "$  0") + 1 sep
-	const yLabelW = 6
-	plotW := width - yLabelW
-	plotH := height - 4 // header(1) + axisX(1) + selInfo(1) + legend(1)
-	if plotH < 5 {
-		plotH = 5
-	}
-	if plotW < 20 {
-		plotW = 20
-	}
-
-	// Identifica session selecionada (cursor da threadsView)
+	// Cursor session — usado pra highlight
 	var selSession *model.Session
 	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
 		selSession = v.flat[v.cursor].session.Session
 	}
 
-	// Canvas: rune + color por celula. Sobreposicao: ponto mais caro vence.
-	type cell struct {
-		ch  rune
-		col lipgloss.Color
-		sel bool
-		w   float64 // peso pra resolver colisao (custo)
-	}
-	canvas := make([][]cell, plotH)
+	// Canvas — galaxyCell e nomeado em vez de anonimo pra poder passar pra
+	// drawLine helper sem brigar com type identity do Go.
+	canvas := make([][]galaxyCell, plotH)
 	for i := range canvas {
-		canvas[i] = make([]cell, plotW)
+		canvas[i] = make([]galaxyCell, plotW)
 	}
 
-	// Plot: x = (when - minTime) / 30d * plotW; y = log(cost+1) / log(maxCost+1) * plotH (invertido)
-	logMax := logE(maxCost + 1)
-	if logMax <= 0 {
-		logMax = 1
+	// 1. Posiciona project clusters em circulo ao redor do centro
+	cx := float64(plotW) / 2
+	cy := float64(plotH) / 2
+	clusterR := math.Min(cx, cy) * 0.65
+	if clusterR < 8 {
+		clusterR = 8
 	}
-	for _, p := range points {
-		dt := p.when.Sub(minTime).Seconds()
-		total := 30 * 24 * 3600.0
-		x := int((dt / total) * float64(plotW-1))
-		if x < 0 {
-			x = 0
-		}
-		if x >= plotW {
-			x = plotW - 1
-		}
-		y := plotH - 1 - int((logE(p.cost+1)/logMax)*float64(plotH-1))
-		if y < 0 {
-			y = 0
-		}
-		if y >= plotH {
-			y = plotH - 1
-		}
-		ch := '·'
-		switch {
-		case p.cost > 10:
-			ch = '◉'
-		case p.cost > 3:
-			ch = '●'
-		case p.cost > 0.5:
-			ch = '•'
-		}
-		isSel := selSession != nil && p.s.SessionID == selSession.SessionID
-		// Ponto mais caro vence (mais visível); selecionado sempre vence
-		existing := canvas[y][x]
-		if isSel || (existing.ch == 0 || p.cost > existing.w) {
-			canvas[y][x] = cell{
-				ch:  ch,
-				col: projectColors[p.t.ProjectDir],
-				sel: isSel,
-				w:   p.cost,
+	type pos struct{ x, y float64 }
+	clusterCenter := map[string]pos{}
+	if len(dirs) == 1 {
+		clusterCenter[dirs[0]] = pos{cx, cy}
+	} else {
+		for i, d := range dirs {
+			theta := 2 * math.Pi * float64(i) / float64(len(dirs))
+			clusterCenter[d] = pos{
+				x: cx + clusterR*math.Cos(theta),
+				y: cy + clusterR*math.Sin(theta)*0.5, // achatado (term aspect ratio 2:1)
 			}
 		}
 	}
 
-	// Render canvas com Y-axis labels
-	var b strings.Builder
+	// 2. Posiciona threads dentro de cada cluster — em mini-circulo pequeno
+	type threadPos struct {
+		t   *stats.Thread
+		pos pos
+	}
+	var threadPositions []threadPos
+	threadByT := map[*stats.Thread]*threadPos{}
+	for _, d := range dirs {
+		threads := grouped[d]
+		center := clusterCenter[d]
+		// Sort threads por ultima atividade (mais novo primeiro)
+		sortedT := append([]*stats.Thread{}, threads...)
+		sort.Slice(sortedT, func(i, j int) bool {
+			ai := sortedT[i].Sessions[len(sortedT[i].Sessions)-1].StartTime
+			aj := sortedT[j].Sessions[len(sortedT[j].Sessions)-1].StartTime
+			return ai.After(aj)
+		})
+		miniR := 4.0
+		if len(sortedT) > 4 {
+			miniR = math.Min(8.0, 3.0+float64(len(sortedT))*0.5)
+		}
+		for i, t := range sortedT {
+			var p pos
+			if len(sortedT) == 1 {
+				p = center
+			} else {
+				theta := 2 * math.Pi * float64(i) / float64(len(sortedT))
+				p = pos{
+					x: center.x + miniR*math.Cos(theta),
+					y: center.y + miniR*math.Sin(theta)*0.5,
+				}
+			}
+			tp := threadPos{t, p}
+			threadPositions = append(threadPositions, tp)
+			threadByT[t] = &threadPositions[len(threadPositions)-1]
+		}
+	}
 
-	// Header
+	// 3. Desenha edges (linhas finas conectando threads do mesmo projeto)
+	for _, d := range dirs {
+		threads := grouped[d]
+		if len(threads) < 2 {
+			continue
+		}
+		col := projectColors[d]
+		// Conecta threads em ordem de cluster (mini-circulo) — adjacentes
+		var positions []pos
+		for _, t := range threads {
+			if tp, ok := threadByT[t]; ok {
+				positions = append(positions, tp.pos)
+			}
+		}
+		// Desenha linhas leves entre cada par (evita poluir com todos×todos
+		// se >5 threads — so adjacentes em ordem)
+		for i := 0; i < len(positions); i++ {
+			j := (i + 1) % len(positions)
+			drawLine(canvas, positions[i], positions[j], col, 1)
+		}
+	}
+
+	// 4. Desenha nodos (overlay)
+	for _, tp := range threadPositions {
+		x, y := int(tp.pos.x+0.5), int(tp.pos.y+0.5)
+		if x < 0 || x >= plotW || y < 0 || y >= plotH {
+			continue
+		}
+		col := projectColors[tp.t.ProjectDir]
+		// Tamanho do nodo: mais sessions = simbolo maior
+		ch := '●'
+		if len(tp.t.Sessions) > 5 {
+			ch = '◉'
+		} else if len(tp.t.Sessions) == 1 {
+			ch = '•'
+		}
+		// Esta thread contem session selecionada?
+		isSel := false
+		if selSession != nil {
+			for _, s := range tp.t.Sessions {
+				if s.SessionID == selSession.SessionID {
+					isSel = true
+					break
+				}
+			}
+		}
+		canvas[y][x] = galaxyCell{ch: ch, col: col, sel: isSel, z: 10}
+	}
+
+	// 5. Render
+	var b strings.Builder
 	header := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("🌌 Galaxy")
 	b.WriteString(header + "  " + muted.Render(fmt.Sprintf(
-		"%d sessions · 30d · max $%.2f", len(points), maxCost)) + "\n")
+		"%d threads · %d projetos · graph view (constelacoes por projeto)",
+		len(threadPositions), len(dirs))) + "\n")
 
-	// Linhas do plot com Y label a cada ~25%
 	for y := 0; y < plotH; y++ {
-		// Y axis label nas linhas 0, 25%, 50%, 75%
-		showLabel := y == 0 || y == plotH/4 || y == plotH/2 || y == 3*plotH/4 || y == plotH-1
-		if showLabel {
-			frac := float64(plotH-1-y) / float64(plotH-1)
-			cost := expE(frac*logMax) - 1
-			label := fmt.Sprintf("%5s ", fmtCostShort(cost))
-			b.WriteString(muted.Render(label))
-		} else {
-			b.WriteString(strings.Repeat(" ", yLabelW))
-		}
-		// Plot row
 		for x := 0; x < plotW; x++ {
 			c := canvas[y][x]
 			if c.ch == 0 {
@@ -1621,13 +1634,6 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		}
 		b.WriteByte('\n')
 	}
-
-	// X-axis: 30d ago ────────── today
-	axis := strings.Repeat(" ", yLabelW) +
-		muted.Render("30d") +
-		muted.Render(strings.Repeat("─", maxInt(0, plotW-9))) +
-		muted.Render("hoje")
-	b.WriteString(axis + "\n")
 
 	// Selected session info
 	if selSession != nil {
@@ -1663,42 +1669,62 @@ func (v threadsView) renderGalaxy(width, height int) string {
 	return b.String()
 }
 
-// logE: ln natural. Sem importar math, evita pull de runtime.
-func logE(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	// Aproximação via Taylor de ln(1+y) com y = (x-1)/(x+1)
-	// Convergência ok pra x ∈ [0.1, 1000]
-	y := (x - 1) / (x + 1)
-	y2 := y * y
-	return 2 * y * (1 + y2/3 + y2*y2/5 + y2*y2*y2/7)
+// galaxyCell e a unidade do canvas do galaxy view. Nomeado pra dar share
+// entre renderGalaxy e drawLine.
+type galaxyCell struct {
+	ch  rune
+	col lipgloss.Color
+	sel bool
+	z   int // z-index — nodos (10) sobrescrevem edges (1)
 }
 
-// expE: e^x via Taylor. Suficiente pra reverter logE no range usado.
-func expE(x float64) float64 {
-	r := 1.0
-	term := 1.0
-	for i := 1; i < 20; i++ {
-		term *= x / float64(i)
-		r += term
+// drawLine pinta uma linha leve (Bresenham) entre 2 pontos no canvas.
+// `z` controla z-index: nodos sempre sobrescrevem edges. Usa pontos
+// finos (·) pra nao competir visualmente com os nodos.
+func drawLine(canvas [][]galaxyCell, a, b struct{ x, y float64 }, col lipgloss.Color, z int) {
+	x0, y0 := int(a.x+0.5), int(a.y+0.5)
+	x1, y1 := int(b.x+0.5), int(b.y+0.5)
+	dx := x1 - x0
+	if dx < 0 {
+		dx = -dx
 	}
-	return r
+	dy := -(y1 - y0)
+	if dy > 0 {
+		dy = -dy
+	}
+	sx := 1
+	if x0 >= x1 {
+		sx = -1
+	}
+	sy := 1
+	if y0 >= y1 {
+		sy = -1
+	}
+	err := dx + dy
+	for {
+		if y0 >= 0 && y0 < len(canvas) && x0 >= 0 && x0 < len(canvas[0]) {
+			if canvas[y0][x0].z < z {
+				canvas[y0][x0] = struct {
+					ch  rune
+					col lipgloss.Color
+					sel bool
+					z   int
+				}{ch: '·', col: col, z: z}
+			}
+		}
+		if x0 == x1 && y0 == y1 {
+			break
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x0 += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y0 += sy
+		}
+	}
 }
 
-// fmtCostShort: formato compacto pra Y axis ("$0", "$1", "$10", "$100").
-func fmtCostShort(cost float64) string {
-	switch {
-	case cost < 0.1:
-		return "$0"
-	case cost < 1:
-		return fmt.Sprintf("$%.1f", cost)
-	case cost < 10:
-		return fmt.Sprintf("$%.0f", cost)
-	case cost < 100:
-		return fmt.Sprintf("$%.0f", cost)
-	default:
-		return fmt.Sprintf("$%.0f", cost)
-	}
-}
 

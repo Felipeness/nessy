@@ -731,11 +731,12 @@ func (m Model) renderWide(h int) string {
 	case tabThreads:
 		// Miller/Graph/Galaxy têm colunas/grid próprios e ficam ilegíveis
 		// no pane de 40% — full-width sem detail panel pra essas views.
-		// Height(h) (não MaxHeight) é critico: bubbletea diff-renderer precisa
-		// que cada frame ocupe exatamente m.width × h, senão transição entre
-		// split (cards) e full-width (graph) deixa ghost do pane direito.
+		// padLinesToWidth garante que cada linha individual chega em m.width
+		// (lipgloss.Width so estende ate a linha mais longa) — sem isso a
+		// transicao split→fullwidth deixa ghost do pane direito visivel.
 		if m.threads.IsFullWidth() {
-			return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.threads.View(m.width, h))
+			body := padLinesToWidth(m.threads.View(m.width, h), m.width)
+			return lipgloss.NewStyle().Width(m.width).Height(h).Render(body)
 		}
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.threads.View(leftW, h)),

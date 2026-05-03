@@ -158,3 +158,23 @@ func clampScrollOffset(offset, total, height int) int {
 	}
 	return offset
 }
+
+// padLinesToWidth garante que CADA linha tem exatamente `width` celulas
+// visiveis, preenchendo com espacos. Sem isso, lipgloss.Width() so estende
+// linhas mais curtas que a maior linha, deixando o resto do row vazio — em
+// transicoes de layout (split <-> fullwidth), o frame anterior leak nas
+// celulas a direita do conteudo curto. (Ghost render de viewStrip quando
+// user pressiona V em sequencia.)
+func padLinesToWidth(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		w := lipgloss.Width(line)
+		if w < width {
+			lines[i] = line + strings.Repeat(" ", width-w)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
