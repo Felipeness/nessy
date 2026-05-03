@@ -54,7 +54,8 @@ func (v toolsView) selectedTool() string {
 }
 
 // View renderiza só a lista de tools (lado esquerdo em multi-pane, único em narrow).
-func (v toolsView) View(width int) string {
+func (v toolsView) View(width, height int) string {
+	_ = height // top-25 cabe em terminais padroes; no-op por enquanto
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	var b strings.Builder
 	fmt.Fprintln(&b, header.Render("🔧 Top tools globais"))

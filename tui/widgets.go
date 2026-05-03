@@ -125,3 +125,36 @@ func scrollWindow(lines []string, cursorLine, height int) string {
 	}
 	return strings.Join(lines[start:start+height], "\n")
 }
+
+// scrollByOffset corta `lines` numa janela [offset, offset+height], clampando
+// offset em [0, len(lines)-height]. Diferente de scrollWindow (que centraliza
+// um cursor), esse usa offset explicito — pra views sem cursor onde ↑↓ rola
+// o body inteiro (behavior/costs/ai/etc).
+func scrollByOffset(lines []string, offset, height int) string {
+	if height <= 0 || len(lines) <= height {
+		return strings.Join(lines, "\n")
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	maxOffset := len(lines) - height
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return strings.Join(lines[offset:offset+height], "\n")
+}
+
+// clampScrollOffset normaliza um offset para a faixa valida dado total/height.
+func clampScrollOffset(offset, total, height int) int {
+	if offset < 0 {
+		return 0
+	}
+	max := total - height
+	if max < 0 {
+		max = 0
+	}
+	if offset > max {
+		return max
+	}
+	return offset
+}

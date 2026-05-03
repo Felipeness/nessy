@@ -14,13 +14,17 @@ import (
 type timelineView struct {
 	sessions []*model.Session
 	pricing  *pricing.Pricing
+
+	scroll int
 }
+
+func (v *timelineView) Scroll(delta int) { v.scroll += delta }
 
 func newTimelineView(sessions []*model.Session, p *pricing.Pricing) timelineView {
 	return timelineView{sessions: sessions, pricing: p}
 }
 
-func (v timelineView) View(width int) string {
+func (v timelineView) View(width, height int) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	var b strings.Builder
 
@@ -58,5 +62,7 @@ func (v timelineView) View(width int) string {
 		)
 	}
 
-	return lipgloss.NewStyle().Width(width).Render(b.String())
+	rendered := lipgloss.NewStyle().Width(width).Render(b.String())
+	lines := strings.Split(rendered, "\n")
+	return scrollByOffset(lines, v.scroll, height)
 }

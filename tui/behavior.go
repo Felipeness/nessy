@@ -18,7 +18,14 @@ type behaviorView struct {
 	style     stats.StyleStats
 	highErr   []stats.ErrorSession
 	timeCost  []stats.TimeCostPoint
+
+	// scroll offset em linhas — ↑↓ ajustam pra rolar o body inteiro,
+	// que tem ~80 linhas e nao cabe num terminal padrao.
+	scroll int
 }
+
+// Scroll ajusta o offset por delta linhas; clamping fica a cargo de View.
+func (v *behaviorView) Scroll(delta int) { v.scroll += delta }
 
 func newBehaviorView(sessions []*model.Session, p *pricing.Pricing) behaviorView {
 	return behaviorView{
@@ -32,7 +39,7 @@ func newBehaviorView(sessions []*model.Session, p *pricing.Pricing) behaviorView
 	}
 }
 
-func (v behaviorView) View(width int) string {
+func (v behaviorView) View(width, height int) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	var b strings.Builder
 
@@ -118,5 +125,7 @@ func (v behaviorView) View(width int) string {
 		}
 	}
 
-	return lipgloss.NewStyle().Width(width).Render(b.String())
+	rendered := lipgloss.NewStyle().Width(width).Render(b.String())
+	lines := strings.Split(rendered, "\n")
+	return scrollByOffset(lines, v.scroll, height)
 }

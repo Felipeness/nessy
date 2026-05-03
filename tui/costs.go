@@ -15,13 +15,17 @@ import (
 type costsView struct {
 	sessions []*model.Session
 	pricing  *pricing.Pricing
+
+	scroll int
 }
+
+func (v *costsView) Scroll(delta int) { v.scroll += delta }
 
 func newCostsView(sessions []*model.Session, p *pricing.Pricing) costsView {
 	return costsView{sessions: sessions, pricing: p}
 }
 
-func (v costsView) View(width int) string {
+func (v costsView) View(width, height int) string {
 	if v.pricing == nil {
 		return "(pricing.toml não carregado)"
 	}
@@ -139,5 +143,7 @@ func (v costsView) View(width int) string {
 	}
 	fmt.Fprintf(&b, "$%.2f economizados em 30d (%.1fx return vs gasto)\n", savings, ratio)
 
-	return lipgloss.NewStyle().Width(width).Render(b.String())
+	rendered := lipgloss.NewStyle().Width(width).Render(b.String())
+	lines := strings.Split(rendered, "\n")
+	return scrollByOffset(lines, v.scroll, height)
 }

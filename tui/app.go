@@ -498,8 +498,15 @@ func (m *Model) moveCursor(delta int) {
 	case tabThreads:
 		m.threads.MoveCursor(delta)
 	case tabStats:
-		// Stats Detailed tem body longo — ↑↓ scrolla a view
 		m.stats.Scroll(delta)
+	case tabBehavior:
+		m.behavior.Scroll(delta)
+	case tabCosts:
+		m.costs.Scroll(delta)
+	case tabTimeline:
+		m.timeline.Scroll(delta)
+	case tabAI:
+		m.ai.Scroll(delta)
 	}
 }
 
@@ -638,26 +645,30 @@ func (m Model) renderWide(h int) string {
 			right.Render(m.detailCtx.renderDetail(m.recent.selected(), rightInner)),
 		)
 	case tabCosts:
-		// full-width — costs/timeline/behavior/ai não tem detail panel
-		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.costs.View(m.width))
+		// full-width — costs/timeline/behavior/ai não tem detail panel.
+		// Height(h) garante padding consistente entre frames (evita ghost).
+		return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.costs.View(m.width, h))
 	case tabTimeline:
-		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.timeline.View(m.width))
+		return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.timeline.View(m.width, h))
 	case tabTools:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
-			left.Render(m.tools.View(leftW)),
+			left.Render(m.tools.View(leftW, h)),
 			right.Render(m.tools.renderDrillDown(rightW)),
 		)
 	case tabBehavior:
-		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.behavior.View(m.width))
+		return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.behavior.View(m.width, h))
 	case tabAI:
-		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ai.View(m.width, m.recent.selected()))
+		return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.ai.View(m.width, h, m.recent.selected()))
 	case tabNess:
-		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ness.View(m.width, h))
+		return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.ness.View(m.width, h))
 	case tabThreads:
 		// Miller/Graph/Galaxy têm colunas/grid próprios e ficam ilegíveis
 		// no pane de 40% — full-width sem detail panel pra essas views.
+		// Height(h) (não MaxHeight) é critico: bubbletea diff-renderer precisa
+		// que cada frame ocupe exatamente m.width × h, senão transição entre
+		// split (cards) e full-width (graph) deixa ghost do pane direito.
 		if m.threads.IsFullWidth() {
-			return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.threads.View(m.width, h))
+			return lipgloss.NewStyle().Width(m.width).Height(h).Render(m.threads.View(m.width, h))
 		}
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.threads.View(leftW, h)),
@@ -680,15 +691,15 @@ func (m Model) renderNarrow(h int) string {
 		}
 		return clamp.Render(m.stats.renderGlobal(m.width))
 	case tabCosts:
-		return clamp.Render(m.costs.View(m.width))
+		return clamp.Render(m.costs.View(m.width, h))
 	case tabTimeline:
-		return clamp.Render(m.timeline.View(m.width))
+		return clamp.Render(m.timeline.View(m.width, h))
 	case tabTools:
-		return clamp.Render(m.tools.View(m.width))
+		return clamp.Render(m.tools.View(m.width, h))
 	case tabBehavior:
-		return clamp.Render(m.behavior.View(m.width))
+		return clamp.Render(m.behavior.View(m.width, h))
 	case tabAI:
-		return clamp.Render(m.ai.View(m.width, m.recent.selected()))
+		return clamp.Render(m.ai.View(m.width, h, m.recent.selected()))
 	case tabNess:
 		return clamp.Render(m.ness.View(m.width, h))
 	case tabThreads:

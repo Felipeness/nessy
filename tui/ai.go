@@ -35,7 +35,11 @@ type aiView struct {
 	// status mostrado no header da AI tab quando há geração em andamento.
 	// Limpo quando a próxima reload acontece.
 	genStatus string
+
+	scroll int
 }
+
+func (v *aiView) Scroll(delta int) { v.scroll += delta }
 
 // aiGeneratedMsg dispara quando uma geração assíncrona termina — main.go
 // trata e dá reload da aiView.
@@ -73,7 +77,7 @@ func newAIView(enabled bool, client *ai.Client, worker *ai.Worker, genModel, emb
 	return v
 }
 
-func (v aiView) View(width int, selected *model.Session) string {
+func (v aiView) View(width, height int, selected *model.Session) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	muted := lipgloss.NewStyle().Foreground(colorMuted)
 	var b strings.Builder
@@ -252,7 +256,9 @@ func (v aiView) View(width int, selected *model.Session) string {
 		fmt.Fprintf(&b, "  %s  %s  %s\n", ts, e.sid[:8], e.summary)
 	}
 
-	return lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
+	rendered := lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
+	lines := strings.Split(rendered, "\n")
+	return scrollByOffset(lines, v.scroll, height)
 }
 
 // reload re-lê tudo do db. Chamado depois que uma geração assíncrona termina.
