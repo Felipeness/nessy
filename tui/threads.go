@@ -1550,9 +1550,10 @@ func (v threadsView) renderGalaxy(width, height int) string {
 			return ai.After(aj)
 		})
 		// Mini radii — escala com numero de threads, mas limitado pra nao
-		// invadir o cluster vizinho. Se cluster tem 1 thread, fica no centro.
-		miniRX := math.Min(clusterRX*0.4, 3.0+float64(len(sortedT))*0.8)
-		miniRY := math.Min(clusterRY*0.4, 1.5+float64(len(sortedT))*0.4)
+		// invadir o cluster vizinho. Estrelas tem ate 5x5 cells, entao
+		// miniR precisa ser >= 4 pra nao haver overlap entre threads adjacentes.
+		miniRX := math.Min(clusterRX*0.45, 5.0+float64(len(sortedT))*1.2)
+		miniRY := math.Min(clusterRY*0.45, 3.0+float64(len(sortedT))*0.7)
 		for i, t := range sortedT {
 			var p pos
 			if len(sortedT) == 1 {
@@ -1592,19 +1593,18 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		}
 	}
 
-	// 4. Desenha nodos (overlay)
+	// 4. Desenha nodos como ESTRELAS multi-cell pra ganhar peso visual.
+	// Antes cada thread era 1 char (●) e o galaxy parecia uma chuvinha de
+	// pontinhos. Agora cada thread e uma cruz/estrela de 3-9 cells, escalando
+	// com numero de sessions. Selecionada ganha halo extra.
 	for _, tp := range threadPositions {
 		x, y := int(tp.pos.x+0.5), int(tp.pos.y+0.5)
-		if x < 0 || x >= plotW || y < 0 || y >= plotH {
-			continue
-		}
 		col := projectColors[tp.t.ProjectDir]
-		// Tamanho do nodo: mais sessions = simbolo maior
-		ch := '●'
+		size := 1
 		if len(tp.t.Sessions) > 5 {
-			ch = '◉'
-		} else if len(tp.t.Sessions) == 1 {
-			ch = '•'
+			size = 3 // estrela grande
+		} else if len(tp.t.Sessions) >= 2 {
+			size = 2 // cruz media
 		}
 		// Esta thread contem session selecionada?
 		isSel := false
@@ -1616,7 +1616,7 @@ func (v threadsView) renderGalaxy(width, height int) string {
 				}
 			}
 		}
-		canvas[y][x] = galaxyCell{ch: ch, col: col, sel: isSel, z: 10}
+		drawStar(canvas, x, y, size, col, isSel)
 	}
 
 	// 5. Render
@@ -1683,6 +1683,76 @@ type galaxyCell struct {
 	col lipgloss.Color
 	sel bool
 	z   int // z-index — nodos (10) sobrescrevem edges (1)
+}
+
+// drawStar pinta uma estrela centralizada em (cx, cy). `size` controla
+// o pattern:
+//
+//	size=1: cruz pequena (3 cells horizontais — ●)
+//	size=2: cruz media (5 cells em +)
+//	         ·                     ·
+//	        ●●●     com halo:    ·●●●·
+//	         ·                     ·
+//	size=3: estrela grande (9 cells em ◇)
+//	          ·                  ·
+//	         ··●··              ●●●
+//	         ·●●●·    →        ●●●●●
+//	         ··●··              ●●●
+//	          ·                  ·
+//
+// isSel acrescenta um anel externo de pontos finos pra destacar.
+// Z-index alto (15) garante que sobrescreve edges (z=1) mas nodos
+// proximos podem se mesclar — desejavel pra dar sensacao de cluster.
+func drawStar(canvas [][]galaxyCell, cx, cy, size int, col lipgloss.Color, isSel bool) {
+	plotH := len(canvas)
+	if plotH == 0 {
+		return
+	}
+	plotW := len(canvas[0])
+	put := func(x, y int, ch rune, z int) {
+		if x < 0 || x >= plotW || y < 0 || y >= plotH {
+			return
+		}
+		if canvas[y][x].z >= z {
+			return
+		}
+		canvas[y][x] = galaxyCell{ch: ch, col: col, sel: isSel, z: z}
+	}
+	switch size {
+	case 1:
+		// 3 cells horizontais — pequena mas mais visivel que 1 char
+		put(cx-1, cy, '●', 15)
+		put(cx, cy, '●', 16)
+		put(cx+1, cy, '●', 15)
+	case 2:
+		// Cruz 5-cell — corpo + 4 braços
+		put(cx, cy, '●', 16)
+		put(cx-1, cy, '●', 15)
+		put(cx+1, cy, '●', 15)
+		put(cx, cy-1, '●', 15)
+		put(cx, cy+1, '●', 15)
+	case 3:
+		// Estrela 13-cell — corpo 3x3 + braços de 1 cell
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				put(cx+dx, cy+dy, '●', 15)
+			}
+		}
+		put(cx, cy, '◉', 17) // centro destacado
+		put(cx-2, cy, '●', 14)
+		put(cx+2, cy, '●', 14)
+		put(cx, cy-2, '●', 14)
+		put(cx, cy+2, '●', 14)
+	}
+	// Halo de seleção: anel externo de pontos finos
+	if isSel {
+		r := size + 1
+		for theta := 0.0; theta < 2*math.Pi; theta += 0.4 {
+			hx := cx + int(float64(r)*math.Cos(theta)+0.5)
+			hy := cy + int(float64(r)*math.Sin(theta)+0.5)
+			put(hx, hy, '·', 12)
+		}
+	}
 }
 
 // drawLine pinta uma linha leve (Bresenham) entre 2 pontos no canvas.
