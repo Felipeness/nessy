@@ -1504,19 +1504,34 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		canvas[i] = make([]galaxyCell, plotW)
 	}
 
-	// 1. Posiciona project clusters em ELIPSE ao redor do centro — uso radii
-	// separados pra X e Y porque terminal tem aspect ratio ~2:1 (celulas quase
-	// duas vezes mais altas que largas). Antes clusterR usava min(cx,cy)*0.65,
-	// que com plotH=47 ficava ~15 cells, espremendo todo galaxy num cantinho.
+	// 1. Posiciona project clusters em ELIPSE ao redor do centro. Calcula
+	// miniR primeiro pra subtrair do clusterR — sem isso, threads no extremo
+	// do mini-circulo + star size estavam saindo da tela direita/inferior.
+	//
+	// Layout total: cluster center sai do centro pra borda, e dentro do cluster
+	// threads radiam ate miniR. Star tem ate ~3 cells de raio. Logo:
+	//   max thread offset = clusterR + miniR + starR
+	// que precisa ser <= plotDim/2 - safetyMargin.
 	cx := float64(plotW) / 2
 	cy := float64(plotH) / 2
-	clusterRX := float64(plotW) * 0.40
-	clusterRY := float64(plotH) * 0.40
-	if clusterRX < 12 {
-		clusterRX = 12
+	const starR = 3.0
+	const safety = 2.0
+	// Maior cluster define o miniR maximo
+	maxClusterSize := 1
+	for _, d := range dirs {
+		if n := len(grouped[d]); n > maxClusterSize {
+			maxClusterSize = n
+		}
 	}
-	if clusterRY < 6 {
-		clusterRY = 6
+	maxMiniRX := 5.0 + float64(maxClusterSize)*1.2
+	maxMiniRY := 3.0 + float64(maxClusterSize)*0.7
+	clusterRX := float64(plotW)/2 - maxMiniRX - starR - safety
+	clusterRY := float64(plotH)/2 - maxMiniRY - starR - safety
+	if clusterRX < 8 {
+		clusterRX = 8
+	}
+	if clusterRY < 4 {
+		clusterRY = 4
 	}
 	type pos struct{ x, y float64 }
 	clusterCenter := map[string]pos{}
@@ -1661,9 +1676,12 @@ func (v threadsView) renderGalaxy(width, height int) string {
 		b.WriteByte('\n')
 	}
 
-	// Legenda de projetos
+	// Legenda de projetos — ITERA `dirs` (sorted) em vez do map projectColors,
+	// senao Go reordena a cada render e a legenda fica piscando, trocando
+	// labels de posicao a cada frame.
 	var legendParts []string
-	for proj, col := range projectColors {
+	for _, proj := range dirs {
+		col := projectColors[proj]
 		short := shortPath(proj, mustHomeTUI())
 		short = truncRight(short, 22)
 		dot := lipgloss.NewStyle().Foreground(col).Render("●")
