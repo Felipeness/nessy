@@ -1446,584 +1446,259 @@ func (v threadsView) renderTimeline(width int) string {
 }
 
 // =============================================================================
-// View 6 — Galaxy (Braille canvas, drawille-inspired)
-// Force-directed layout simples + render em chars Braille (2x4 pixels/char).
+// View 6 — Galaxy (scatter plot tempo × custo)
+// renderGalaxy abaixo. brailleCanvas force-directed antigo foi substituido.
 // =============================================================================
 
-// brailleCanvas inspirado em asciimoo/drawille.
-// Cada char Braille (U+2800..U+28FF) representa 2×4 pixels.
-// Bit positions: col 0 → bits 0,1,2,6 (rows 0,1,2,3) · col 1 → bits 3,4,5,7
-// labels é um grid de runes em char-coords que sobrescreve o braille no render
-// final (usado pra colocar texto sobre nodes do galaxy).
-type brailleCanvas struct {
-	pixels      [][]uint8 // pixel grid (h*4 rows × w*2 cols)
-	colors      [][]lipgloss.Color
-	labels      [][]rune          // char grid — rune != 0 sobrescreve braille
-	labelColors [][]lipgloss.Color
-	labelBold   [][]bool
-	w, h        int // chars
-}
 
-func newBraille(w, h int) *brailleCanvas {
-	pixels := make([][]uint8, h*4)
-	for i := range pixels {
-		pixels[i] = make([]uint8, w*2)
-	}
-	colors := make([][]lipgloss.Color, h)
-	labels := make([][]rune, h)
-	labelColors := make([][]lipgloss.Color, h)
-	labelBold := make([][]bool, h)
-	for i := range colors {
-		colors[i] = make([]lipgloss.Color, w)
-		labels[i] = make([]rune, w)
-		labelColors[i] = make([]lipgloss.Color, w)
-		labelBold[i] = make([]bool, w)
-	}
-	return &brailleCanvas{
-		pixels: pixels, colors: colors,
-		labels: labels, labelColors: labelColors, labelBold: labelBold,
-		w: w, h: h,
-	}
-}
-
-// label coloca string s a partir de (cx, cy) em coords de char.
-// Sobrescreve qualquer braille daquele char durante o render. Trunca em
-// limites do canvas.
-func (c *brailleCanvas) label(cx, cy int, s string, color lipgloss.Color, bold bool) {
-	if cy < 0 || cy >= c.h {
-		return
-	}
-	for i, r := range []rune(s) {
-		x := cx + i
-		if x < 0 || x >= c.w {
-			continue
-		}
-		c.labels[cy][x] = r
-		c.labelColors[cy][x] = color
-		c.labelBold[cy][x] = bold
-	}
-}
-
-func (c *brailleCanvas) set(x, y int, color lipgloss.Color) {
-	if x < 0 || y < 0 || y >= c.h*4 || x >= c.w*2 {
-		return
-	}
-	c.pixels[y][x] = 1
-	cx, cy := x/2, y/4
-	c.colors[cy][cx] = color
-}
-
-func (c *brailleCanvas) circle(cx, cy, r int, color lipgloss.Color) {
-	for dy := -r; dy <= r; dy++ {
-		for dx := -r; dx <= r; dx++ {
-			if dx*dx+dy*dy <= r*r {
-				c.set(cx+dx, cy+dy, color)
-			}
-		}
-	}
-}
-
-func (c *brailleCanvas) line(x0, y0, x1, y1 int, color lipgloss.Color, dashed bool) {
-	dx, dy := abs(x1-x0), abs(y1-y0)
-	sx, sy := 1, 1
-	if x0 >= x1 {
-		sx = -1
-	}
-	if y0 >= y1 {
-		sy = -1
-	}
-	err := dx - dy
-	count := 0
-	for {
-		if !dashed || (count%4 < 2) {
-			c.set(x0, y0, color)
-		}
-		if x0 == x1 && y0 == y1 {
-			break
-		}
-		e2 := 2 * err
-		if e2 > -dy {
-			err -= dy
-			x0 += sx
-		}
-		if e2 < dx {
-			err += dx
-			y0 += sy
-		}
-		count++
-	}
-}
-
-func (c *brailleCanvas) render() string {
-	// Bit positions matching Unicode Braille:
-	// dots: 1=0x01 2=0x02 3=0x04 4=0x08 5=0x10 6=0x20 7=0x40 8=0x80
-	// layout in 2x4:
-	//   1 4
-	//   2 5
-	//   3 6
-	//   7 8
-	bits := [4][2]uint8{
-		{0x01, 0x08},
-		{0x02, 0x10},
-		{0x04, 0x20},
-		{0x40, 0x80},
-	}
-	var out strings.Builder
-	for cy := 0; cy < c.h; cy++ {
-		var line strings.Builder
-		// Track style "key" for run-coalescing (color + bold).
-		type styleKey struct {
-			col  lipgloss.Color
-			bold bool
-		}
-		var curStyle styleKey
-		var buf strings.Builder
-		flush := func() {
-			if buf.Len() == 0 {
-				return
-			}
-			st := lipgloss.NewStyle()
-			if curStyle.col != "" {
-				st = st.Foreground(curStyle.col)
-			}
-			if curStyle.bold {
-				st = st.Bold(true)
-			}
-			line.WriteString(st.Render(buf.String()))
-			buf.Reset()
-		}
-		for cx := 0; cx < c.w; cx++ {
-			var ch rune = ' '
-			var col lipgloss.Color
-			var bold bool
-			// Label overrides braille
-			if lbl := c.labels[cy][cx]; lbl != 0 {
-				ch = lbl
-				col = c.labelColors[cy][cx]
-				bold = c.labelBold[cy][cx]
-			} else {
-				var b uint8
-				for row := 0; row < 4; row++ {
-					for cc := 0; cc < 2; cc++ {
-						px, py := cx*2+cc, cy*4+row
-						if c.pixels[py][px] != 0 {
-							b |= bits[row][cc]
-						}
-					}
-				}
-				if b != 0 {
-					ch = rune(0x2800 + int(b))
-				}
-				col = c.colors[cy][cx]
-			}
-			st := styleKey{col: col, bold: bold}
-			if st != curStyle {
-				flush()
-				curStyle = st
-			}
-			buf.WriteRune(ch)
-		}
-		flush()
-		out.WriteString(line.String() + "\n")
-	}
-	return out.String()
-}
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// renderGalaxy faz force-directed layout simples + braille canvas.
+// renderGalaxy: scatter plot tempo × custo. Cada session é um ponto colorido
+// pelo projeto; eixo X é tempo (30d → hoje), eixo Y é custo (log-scale).
+// Substituiu a versao force-directed Braille que ficava ilegivel — esse e
+// determinístico, lê de cima→baixo (mais caro) e esquerda→direita (mais antigo).
 func (v threadsView) renderGalaxy(width, height int) string {
 	if len(v.threads) == 0 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render("(nenhuma thread)")
 	}
-	if width < 60 || height < 12 {
+	if width < 50 || height < 10 {
 		return lipgloss.NewStyle().Foreground(colorMuted).Padding(2).Render(
-			"galaxy view requer terminal ≥ 60×12 — use outra view")
+			"galaxy view requer terminal ≥ 50×10")
 	}
-	canvas := newBraille(width, height-2) // leave room for legend
-	pixW, pixH := width*2, (height-2)*4
 
-	// Assign cores por projeto
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
+
+	// Cores por projeto — paleta limitada, repete se muitos projetos
 	projectColors := map[string]lipgloss.Color{}
-	colors := []lipgloss.Color{
-		"#7dd3fc", "#fbbf24", "#f472b6", "#34d399", "#60a5fa", "#a78bfa",
+	palette := []lipgloss.Color{
+		"#7dd3fc", "#fbbf24", "#f472b6", "#34d399",
+		"#60a5fa", "#a78bfa", "#fb7185", "#84cc16",
 	}
-	for i, t := range v.threads {
+	for _, t := range v.threads {
 		if _, ok := projectColors[t.ProjectDir]; !ok {
-			projectColors[t.ProjectDir] = colors[len(projectColors)%len(colors)]
+			projectColors[t.ProjectDir] = palette[len(projectColors)%len(palette)]
 		}
-		_ = i
 	}
 
-	// Build flat node list (1 per session) — posicoes iniciais em CÍRCULO ao
-	// redor do centro pra evitar convergir em borrão.
-	type node struct {
-		s     *stats.ThreadSession
-		t     *stats.Thread
-		x, y  float64
-		vx,vy float64
-		r     int
+	// Coleta sessions com custo. Bounds: 30 dias atrás → agora, 0 → maxCost.
+	type point struct {
+		s    *stats.ThreadSession
+		t    *stats.Thread
+		cost float64
+		when time.Time
 	}
-	var nodes []*node
-	totalSess := 0
-	for _, t := range v.threads {
-		totalSess += len(t.Sessions)
-	}
-	cx0, cy0 := float64(pixW)/2, float64(pixH)/2
-	rInit := minFloat(float64(pixW), float64(pixH))/2 - 12
-	if rInit < 20 {
-		rInit = 20
-	}
-	idx := 0
+	now := time.Now()
+	minTime := now.Add(-30 * 24 * time.Hour)
+	var points []point
+	maxCost := 0.0
 	for _, t := range v.threads {
 		for _, s := range t.Sessions {
-			r := 2
+			if s.StartTime.Before(minTime) {
+				continue
+			}
 			cost := 0.0
 			if v.pricing != nil {
 				if c, ok := v.pricing.Cost(s.Session); ok {
 					cost = c.USD
 				}
 			}
-			if cost > 1 {
-				r = 3
+			if cost > maxCost {
+				maxCost = cost
 			}
-			if cost > 3 {
-				r = 4
-			}
-			if cost > 10 {
-				r = 5
-			}
-			// Distribute em círculo igualmente
-			theta := 2 * 3.14159265 * float64(idx) / float64(maxInt(1, totalSess))
-			nodes = append(nodes, &node{
-				s: s, t: t,
-				x: cx0 + rInit*cosApprox(theta),
-				y: cy0 + rInit*sinApprox(theta),
-				r: r,
-			})
-			idx++
+			points = append(points, point{s: s, t: t, cost: cost, when: s.StartTime})
 		}
 	}
-
-	// Edges: continuação dentro da mesma thread
-	type edge struct{ a, b *node; dashed bool }
-	var edges []edge
-	for _, t := range v.threads {
-		for i := 1; i < len(t.Sessions); i++ {
-			var pn, cn *node
-			for _, n := range nodes {
-				if n.s == t.Sessions[i-1] {
-					pn = n
-				}
-				if n.s == t.Sessions[i] {
-					cn = n
-				}
-			}
-			if pn != nil && cn != nil {
-				edges = append(edges, edge{pn, cn, t.Sessions[i].Kind == "compact"})
-			}
-		}
+	if len(points) == 0 {
+		return muted.Padding(2).Render("(nenhuma session nos últimos 30 dias)")
+	}
+	if maxCost <= 0 {
+		maxCost = 0.01
 	}
 
-	// Force-directed mais agressivo — k baseado em area + node count, repulsão
-	// reforçada, atração intra-projeto reduzida. 150 iters pra convergir.
-	cx, cy := cx0, cy0
-	k := sqrt(float64(pixW*pixH)/float64(maxInt(1, totalSess))) * 0.85
-
-	for iter := 0; iter < 150; iter++ {
-		// Cooling: força reduz com tempo pra estabilizar
-		coolFactor := 1.0 - float64(iter)/200.0
-		if coolFactor < 0.2 {
-			coolFactor = 0.2
-		}
-
-		for _, a := range nodes {
-			a.vx, a.vy = 0, 0
-			// Repulsão forte entre todos
-			for _, b := range nodes {
-				if a == b {
-					continue
-				}
-				dx := a.x - b.x
-				dy := a.y - b.y
-				d := sqrt(dx*dx + dy*dy)
-				if d < 0.5 {
-					d = 0.5
-				}
-				f := (k * k) / d * 1.5
-				a.vx += (dx / d) * f
-				a.vy += (dy / d) * f
-			}
-			// Atração intra-projeto SUAVE (cluster mas não colado)
-			for _, b := range nodes {
-				if a == b || a.t.ProjectDir != b.t.ProjectDir {
-					continue
-				}
-				dx := a.x - b.x
-				dy := a.y - b.y
-				d := sqrt(dx*dx + dy*dy)
-				if d < 0.5 {
-					continue
-				}
-				f := (d * d) / k * 0.15
-				a.vx -= (dx / d) * f
-				a.vy -= (dy / d) * f
-			}
-			// Pull suave pro centro
-			a.vx += (cx - a.x) * 0.003
-			a.vy += (cy - a.y) * 0.003
-		}
-		// Edge attraction
-		for _, e := range edges {
-			dx := e.a.x - e.b.x
-			dy := e.a.y - e.b.y
-			d := sqrt(dx*dx + dy*dy)
-			if d < 0.5 {
-				continue
-			}
-			f := (d * d) / k * 0.5
-			e.a.vx -= (dx / d) * f
-			e.a.vy -= (dy / d) * f
-			e.b.vx += (dx / d) * f
-			e.b.vy += (dy / d) * f
-		}
-		// Apply velocity com damping + clamp
-		for _, n := range nodes {
-			speed := sqrt(n.vx*n.vx + n.vy*n.vy)
-			if speed < 0.01 {
-				speed = 0.01
-			}
-			cap := speed
-			if cap > 8 {
-				cap = 8
-			}
-			n.x += (n.vx / speed) * cap * coolFactor * 0.4
-			n.y += (n.vy / speed) * cap * coolFactor * 0.4
-			margin := 6.0
-			if n.x < margin {
-				n.x = margin
-			}
-			if n.x > float64(pixW)-margin {
-				n.x = float64(pixW) - margin
-			}
-			if n.y < margin {
-				n.y = margin
-			}
-			if n.y > float64(pixH)-margin {
-				n.y = float64(pixH) - margin
-			}
-		}
+	// Reserva colunas pra Y-axis label (4 chars: "$100" ou "$  0") + 1 sep
+	const yLabelW = 6
+	plotW := width - yLabelW
+	plotH := height - 4 // header(1) + axisX(1) + selInfo(1) + legend(1)
+	if plotH < 5 {
+		plotH = 5
+	}
+	if plotW < 20 {
+		plotW = 20
 	}
 
-	// Draw edges first
-	for _, e := range edges {
-		col := projectColors[e.a.t.ProjectDir]
-		canvas.line(int(e.a.x), int(e.a.y), int(e.b.x), int(e.b.y), col, e.dashed)
-	}
-	// Identifica session selecionada
+	// Identifica session selecionada (cursor da threadsView)
 	var selSession *model.Session
-	var selNode *node
 	if v.cursor < len(v.flat) && v.flat[v.cursor].session != nil {
 		selSession = v.flat[v.cursor].session.Session
-		for _, n := range nodes {
-			if n.s.SessionID == selSession.SessionID {
-				selNode = n
-				break
+	}
+
+	// Canvas: rune + color por celula. Sobreposicao: ponto mais caro vence.
+	type cell struct {
+		ch  rune
+		col lipgloss.Color
+		sel bool
+		w   float64 // peso pra resolver colisao (custo)
+	}
+	canvas := make([][]cell, plotH)
+	for i := range canvas {
+		canvas[i] = make([]cell, plotW)
+	}
+
+	// Plot: x = (when - minTime) / 30d * plotW; y = log(cost+1) / log(maxCost+1) * plotH (invertido)
+	logMax := logE(maxCost + 1)
+	if logMax <= 0 {
+		logMax = 1
+	}
+	for _, p := range points {
+		dt := p.when.Sub(minTime).Seconds()
+		total := 30 * 24 * 3600.0
+		x := int((dt / total) * float64(plotW-1))
+		if x < 0 {
+			x = 0
+		}
+		if x >= plotW {
+			x = plotW - 1
+		}
+		y := plotH - 1 - int((logE(p.cost+1)/logMax)*float64(plotH-1))
+		if y < 0 {
+			y = 0
+		}
+		if y >= plotH {
+			y = plotH - 1
+		}
+		ch := '·'
+		switch {
+		case p.cost > 10:
+			ch = '◉'
+		case p.cost > 3:
+			ch = '●'
+		case p.cost > 0.5:
+			ch = '•'
+		}
+		isSel := selSession != nil && p.s.SessionID == selSession.SessionID
+		// Ponto mais caro vence (mais visível); selecionado sempre vence
+		existing := canvas[y][x]
+		if isSel || (existing.ch == 0 || p.cost > existing.w) {
+			canvas[y][x] = cell{
+				ch:  ch,
+				col: projectColors[p.t.ProjectDir],
+				sel: isSel,
+				w:   p.cost,
 			}
 		}
 	}
 
-	// Draw nodes
-	for _, n := range nodes {
-		col := projectColors[n.t.ProjectDir]
-		canvas.circle(int(n.x), int(n.y), n.r, col)
-	}
-	// Draw cursor anel + crosshair sobre nó selecionado (último, fica em cima)
-	if selNode != nil {
-		accentCol := lipgloss.Color("#a78bfa")
-		// Anel maior accent (apenas borda — pixels no perímetro)
-		ringR := selNode.r + 3
-		for theta := 0.0; theta < 6.28; theta += 0.05 {
-			x := int(selNode.x + float64(ringR)*cosApprox(theta))
-			y := int(selNode.y + float64(ringR)*sinApprox(theta))
-			canvas.set(x, y, accentCol)
-			canvas.set(x+1, y, accentCol)
-		}
-		// Crosshair: linhas curtas saindo do node
-		cx0 := int(selNode.x)
-		cy0 := int(selNode.y)
-		canvas.line(cx0-ringR-3, cy0, cx0-ringR-1, cy0, accentCol, false)
-		canvas.line(cx0+ringR+1, cy0, cx0+ringR+3, cy0, accentCol, false)
-		canvas.line(cx0, cy0-ringR-3, cx0, cy0-ringR-1, accentCol, false)
-		canvas.line(cx0, cy0+ringR+1, cx0, cy0+ringR+3, accentCol, false)
-	}
+	// Render canvas com Y-axis labels
+	var b strings.Builder
 
-	// Labels: número sequencial em cada node (#01, #02...). A legenda embaixo
-	// mapeia número → branch · projeto · time. Selected node mostra a branch
-	// inline pra contexto rápido.
-	type charBox struct{ cx, cy, w int }
-	var occupied []charBox
-	overlaps := func(b charBox) bool {
-		for _, o := range occupied {
-			if b.cy == o.cy && b.cx < o.cx+o.w && b.cx+b.w > o.cx {
-				return true
-			}
-		}
-		return false
-	}
-	// Atribui número por ordem de aparição nos nodes (cronológica nessa view)
-	for i, n := range nodes {
-		num := i + 1
-		isSel := selNode != nil && n == selNode
-		var lbl string
-		if isSel {
-			br := n.t.Branch
-			if br == "" {
-				br = "(no-br)"
-			}
-			lbl = fmt.Sprintf(" #%02d %s", num, truncRight(br, 14))
+	// Header
+	header := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("🌌 Galaxy")
+	b.WriteString(header + "  " + muted.Render(fmt.Sprintf(
+		"%d sessions · 30d · max $%.2f", len(points), maxCost)) + "\n")
+
+	// Linhas do plot com Y label a cada ~25%
+	for y := 0; y < plotH; y++ {
+		// Y axis label nas linhas 0, 25%, 50%, 75%
+		showLabel := y == 0 || y == plotH/4 || y == plotH/2 || y == 3*plotH/4 || y == plotH-1
+		if showLabel {
+			frac := float64(plotH-1-y) / float64(plotH-1)
+			cost := expE(frac*logMax) - 1
+			label := fmt.Sprintf("%5s ", fmtCostShort(cost))
+			b.WriteString(muted.Render(label))
 		} else {
-			lbl = fmt.Sprintf(" #%02d", num)
+			b.WriteString(strings.Repeat(" ", yLabelW))
 		}
-		// Char coords: tenta direita, depois esquerda, depois baixo
-		cx := int(n.x)/2 + n.r + 1
-		cy := int(n.y) / 4
-		w := lipgloss.Width(lbl)
-		positions := []charBox{
-			{cx, cy, w},
-			{int(n.x)/2 - n.r - w, cy, w},
-			{int(n.x) / 2, cy + 1, w},
-			{int(n.x) / 2, cy - 1, w},
-		}
-		var placed *charBox
-		for _, p := range positions {
-			if p.cx < 0 || p.cy < 0 || p.cy >= height-2 || p.cx+p.w > width {
+		// Plot row
+		for x := 0; x < plotW; x++ {
+			c := canvas[y][x]
+			if c.ch == 0 {
+				b.WriteByte(' ')
 				continue
 			}
-			if overlaps(p) {
-				continue
+			style := lipgloss.NewStyle().Foreground(c.col)
+			if c.sel {
+				style = style.Bold(true).Background(lipgloss.Color("237"))
 			}
-			placed = &p
-			break
+			b.WriteString(style.Render(string(c.ch)))
 		}
-		if placed == nil {
-			continue
-		}
-		col := projectColors[n.t.ProjectDir]
-		if isSel {
-			col = lipgloss.Color("#a78bfa")
-		}
-		canvas.label(placed.cx, placed.cy, lbl, col, isSel)
-		occupied = append(occupied, *placed)
+		b.WriteByte('\n')
 	}
 
-	// Render + legend
-	out := canvas.render()
+	// X-axis: 30d ago ────────── today
+	axis := strings.Repeat(" ", yLabelW) +
+		muted.Render("30d") +
+		muted.Render(strings.Repeat("─", maxInt(0, plotW-9))) +
+		muted.Render("hoje")
+	b.WriteString(axis + "\n")
 
-	muted := lipgloss.NewStyle().Foreground(colorMuted)
-	var legend strings.Builder
-
-	// Highlight da session selecionada
-	if selNode != nil {
-		num := 0
-		for i, n := range nodes {
-			if n == selNode {
-				num = i + 1
-				break
+	// Selected session info
+	if selSession != nil {
+		when := selSession.StartTime.Local().Format("02/01 15:04")
+		cost := "—"
+		if v.pricing != nil {
+			if c, ok := v.pricing.Cost(selSession); ok {
+				cost = fmt.Sprintf("$%.2f", c.USD)
 			}
 		}
-		when := selSession.StartTime.Local().Format("02/01 15:04")
-		legend.WriteString(lipgloss.NewStyle().
+		title := truncRight(v.titleFor(selSession), maxInt(20, width-50))
+		sel := lipgloss.NewStyle().
 			Background(lipgloss.Color("237")).
 			Foreground(colorAccent).Bold(true).
-			Render(fmt.Sprintf(" ▶ #%02d  %s  %s ",
-				num, when,
-				truncRight(v.titleFor(selSession), maxInt(20, width-30)))) + "\n")
+			Render(fmt.Sprintf(" ▶ %s  %s  %s ", when, cost, title))
+		b.WriteString(sel + "\n")
+	} else {
+		b.WriteByte('\n')
 	}
 
-	// Legenda: mapeia # → contexto. 2 colunas se couber.
-	legend.WriteString(muted.Render("─── nodes ───") + "\n")
-	colW := 38
-	cols := width / colW
-	if cols < 1 {
-		cols = 1
+	// Legenda de projetos
+	var legendParts []string
+	for proj, col := range projectColors {
+		short := shortPath(proj, mustHomeTUI())
+		short = truncRight(short, 22)
+		dot := lipgloss.NewStyle().Foreground(col).Render("●")
+		legendParts = append(legendParts, dot+" "+short)
 	}
-	for i, n := range nodes {
-		num := i + 1
-		br := n.t.Branch
-		if br == "" {
-			br = "(no-br)"
-		}
-		br = truncRight(br, 18)
-		when := n.s.StartTime.Local().Format("02/01 15:04")
-		col := projectColors[n.t.ProjectDir]
-		marker := lipgloss.NewStyle().Foreground(col).Render("●")
-		isSel := selNode != nil && n == selNode
-		numStyle := lipgloss.NewStyle().Foreground(col)
-		if isSel {
-			numStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-		}
-		entry := fmt.Sprintf("%s %s %-18s %s",
-			marker,
-			numStyle.Render(fmt.Sprintf("#%02d", num)),
-			lipgloss.NewStyle().Foreground(colorFg).Render(br),
-			muted.Render(when))
-		legend.WriteString(entry)
-		if (i+1)%cols == 0 {
-			legend.WriteString("\n")
-		} else {
-			legend.WriteString("  ")
-		}
+	if len(legendParts) > 0 {
+		b.WriteString(muted.Render("projetos: ") + strings.Join(legendParts, "   "))
 	}
-	if len(nodes)%cols != 0 {
-		legend.WriteString("\n")
-	}
-	return out + legend.String()
+
+	return b.String()
 }
 
-func sqrt(x float64) float64 {
+// logE: ln natural. Sem importar math, evita pull de runtime.
+func logE(x float64) float64 {
 	if x <= 0 {
 		return 0
 	}
-	z := x / 2
-	for i := 0; i < 12; i++ {
-		z = z - (z*z-x)/(2*z)
-	}
-	return z
+	// Aproximação via Taylor de ln(1+y) com y = (x-1)/(x+1)
+	// Convergência ok pra x ∈ [0.1, 1000]
+	y := (x - 1) / (x + 1)
+	y2 := y * y
+	return 2 * y * (1 + y2/3 + y2*y2/5 + y2*y2*y2/7)
 }
 
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
+// expE: e^x via Taylor. Suficiente pra reverter logE no range usado.
+func expE(x float64) float64 {
+	r := 1.0
+	term := 1.0
+	for i := 1; i < 20; i++ {
+		term *= x / float64(i)
+		r += term
 	}
-	return b
+	return r
 }
 
-// cosApprox/sinApprox — Taylor series simple. Sem importar math.
-func cosApprox(x float64) float64 {
-	// Reduz pra [-π, π]
-	for x > 3.14159265 {
-		x -= 2 * 3.14159265
+// fmtCostShort: formato compacto pra Y axis ("$0", "$1", "$10", "$100").
+func fmtCostShort(cost float64) string {
+	switch {
+	case cost < 0.1:
+		return "$0"
+	case cost < 1:
+		return fmt.Sprintf("$%.1f", cost)
+	case cost < 10:
+		return fmt.Sprintf("$%.0f", cost)
+	case cost < 100:
+		return fmt.Sprintf("$%.0f", cost)
+	default:
+		return fmt.Sprintf("$%.0f", cost)
 	}
-	for x < -3.14159265 {
-		x += 2 * 3.14159265
-	}
-	x2 := x * x
-	return 1 - x2/2 + x2*x2/24 - x2*x2*x2/720
 }
 
-func sinApprox(x float64) float64 {
-	for x > 3.14159265 {
-		x -= 2 * 3.14159265
-	}
-	for x < -3.14159265 {
-		x += 2 * 3.14159265
-	}
-	x2 := x * x
-	return x - x*x2/6 + x*x2*x2/120 - x*x2*x2*x2/5040
-}
