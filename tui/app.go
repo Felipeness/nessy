@@ -112,7 +112,15 @@ type AIDeps struct {
 
 // New cria o root model carregando sessions do cache + state persistido.
 func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.State, statePath string, aiDeps AIDeps) Model {
+	t0 := time.Now()
+	prof := func(label string) {
+		if os.Getenv("NESSY_PROFILE") != "" {
+			fmt.Fprintf(os.Stderr, "[%6dms] tui.New: %s\n", time.Since(t0).Milliseconds(), label)
+		}
+	}
+	prof("enter")
 	sessions, _ := db.ListSessions()
+	prof("ListSessions")
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
@@ -125,13 +133,36 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		}
 	}
 
-	recent := newRecentView(sessions, p, loadSummaries(db))
+	summaries := loadSummaries(db)
+	prof("loadSummaries")
+	recent := newRecentView(sessions, p, summaries)
 	recent.groupByProject = state.RecentGroupByProject
+	prof("newRecentView")
 
 	search := newSearchView(db, p, sessions)
 	if state.SearchMode == "full-text" {
 		search.mode = modeFullText
 	}
+	prof("newSearchView")
+
+	detailCtx := newDetailContext(sessions, p)
+	prof("newDetailContext")
+	stats := newStatsView(sessions, p, db)
+	prof("newStatsView")
+	costs := newCostsView(sessions, p)
+	prof("newCostsView")
+	timeline := newTimelineView(sessions, p)
+	prof("newTimelineView")
+	tools := newToolsView(sessions)
+	prof("newToolsView")
+	behavior := newBehaviorView(sessions, p)
+	prof("newBehaviorView")
+	ai := newAIView(aiDeps.Enabled, aiDeps.Client, aiDeps.Worker, aiDeps.GenModel, aiDeps.EmbedModel, db, sessions)
+	prof("newAIView")
+	ness := newNessView(aiDeps.Enabled, aiDeps.Client, db, aiDeps.GenModel, aiDeps.EmbedModel)
+	prof("newNessView")
+	threads := newThreadsView(db, p, sessions, summaries)
+	prof("newThreadsView")
 
 	return Model{
 		db:        db,
@@ -141,17 +172,17 @@ func New(db *index.DB, p *pricing.Pricing, cfg *config.Config, state *config.Sta
 		activeTab: tab,
 		status:    "ready",
 		spin:      sp,
-		detailCtx: newDetailContext(sessions, p),
+		detailCtx: detailCtx,
 		recent:    recent,
 		search:    search,
-		stats:     newStatsView(sessions, p, db),
-		costs:     newCostsView(sessions, p),
-		timeline:  newTimelineView(sessions, p),
-		tools:     newToolsView(sessions),
-		behavior:  newBehaviorView(sessions, p),
-		ai:        newAIView(aiDeps.Enabled, aiDeps.Client, aiDeps.Worker, aiDeps.GenModel, aiDeps.EmbedModel, db, sessions),
-		ness:      newNessView(aiDeps.Enabled, aiDeps.Client, db, aiDeps.GenModel, aiDeps.EmbedModel),
-		threads:   newThreadsView(db, p, sessions, loadSummaries(db)),
+		stats:     stats,
+		costs:     costs,
+		timeline:  timeline,
+		tools:     tools,
+		behavior:  behavior,
+		ai:        ai,
+		ness:      ness,
+		threads:   threads,
 		aiClient:  aiDeps.Client,
 		aiWorker:  aiDeps.Worker,
 	}
@@ -197,10 +228,28 @@ func loadSummaries(db *index.DB) map[string]string {
 // Init satisfies tea.Model. Dispara o reindex inicial em background — TUI
 // abre instantâneo com o que já está cached no SQLite, sessions novas/atualizadas
 // aparecem quando o reindex termina (refreshDoneMsg → m.reload()).
+//
+// Também kickoff Ollama health check assíncrono — antes era chamado síncrono
+// dentro de aiView.View() a cada render, com timeout 2s = freeze por keystroke
+// quando Ollama estava offline.
+// onTabChanged dispara comandos lazy quando user troca pra uma tab cuja
+// inicializacao foi adiada — por enquanto so behavior, mas pode crescer
+// (ex: AI clusters, threads heavy stats).
+func (m *Model) onTabChanged() tea.Cmd {
+	if m.activeTab == tabBehavior && !m.behavior.computed && !m.behavior.loading {
+		m.behavior.loading = true
+		return behaviorComputeCmd(m.behavior.sessions, m.behavior.pricing)
+	}
+	return nil
+}
+
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.spin.Tick}
 	if m.initialIngest != nil {
 		cmds = append(cmds, m.initialIngest)
+	}
+	if m.aiClient != nil {
+		cmds = append(cmds, aiHealthCmd(m.aiClient))
 	}
 	return tea.Batch(cmds...)
 }
@@ -259,6 +308,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "ai " + msg.kind + " ✓"
 		}
 		m.statusUntil = time.Now().Add(4 * time.Second)
+		return m, nil
+
+	case aiHealthMsg:
+		m.ai.reachable = msg.reachable
+		m.ai.lastHealthAt = msg.at
+		// Re-tick em 30s pra atualizar status sem bloquear renders
+		return m, aiHealthTickCmd(m.aiClient, 30*time.Second)
+
+	case behaviorComputedMsg:
+		m.behavior.bigrams = msg.bigrams
+		m.behavior.trigrams = msg.trigrams
+		m.behavior.coOccur = msg.coOccur
+		m.behavior.flow = msg.flow
+		m.behavior.style = msg.style
+		m.behavior.highErr = msg.highErr
+		m.behavior.timeCost = msg.timeCost
+		m.behavior.loading = false
+		m.behavior.computed = true
 		return m, nil
 
 	case nessChatDoneMsg:
@@ -331,40 +398,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case keyMatches(k, keys.NextTab):
 			m.activeTab = (m.activeTab + 1) % numTabs
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.PrevTab):
 			m.activeTab = (m.activeTab + numTabs - 1) % numTabs
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab1):
 			m.activeTab = tabSearch
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab2):
 			m.activeTab = tabRecent
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab3):
 			m.activeTab = tabStats
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab4):
 			m.activeTab = tabCosts
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab5):
 			m.activeTab = tabTimeline
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab6):
 			m.activeTab = tabTools
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab7):
 			m.activeTab = tabBehavior
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab8):
 			m.activeTab = tabAI
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab9):
 			m.activeTab = tabNess
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.Tab10):
 			m.activeTab = tabThreads
-			return m, nil
+			return m, m.onTabChanged()
 		case keyMatches(k, keys.ViewToggle):
 			if m.activeTab == tabThreads {
 				m.threads.ToggleView()

@@ -375,6 +375,15 @@ func cmdTui(args []string) {
 }
 
 func cmdTuiInternal(noAI bool, aiModelOverride string) {
+	// Timing logs ativados via NESSY_PROFILE=1 — ajuda a diagnosticar startup
+	// lento (Windows cold start, SQLite WAL, file walk, etc).
+	t0 := time.Now()
+	logTime := func(label string) {
+		if os.Getenv("NESSY_PROFILE") != "" {
+			fmt.Fprintf(os.Stderr, "[%6dms] %s\n", time.Since(t0).Milliseconds(), label)
+		}
+	}
+	logTime("start")
 	home, _ := os.UserHomeDir()
 	cacheDir := branding.CacheDir()
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -391,14 +400,17 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 		}
 	}
 
+	logTime("pre-db.Open")
 	db, err := index.Open(dbPath)
 	if err != nil {
 		fatal(err)
 	}
 	defer db.Close()
+	logTime("post-db.Open")
 
 	cfg, _ := config.LoadConfig(configPath)
 	state := config.LoadState(statePath)
+	logTime("post-config-load")
 
 	// Reindex roda async no Init() do TUI — startup mostra cache imediatamente
 	// e refresca quando termina. Cold-start vai de ~20s pra <1s pra primeiro paint.
@@ -443,9 +455,12 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 		}
 	}
 
+	logTime("pre-tui.New")
 	tuiModel := tui.New(db, p, cfg, state, statePath, aiDeps)
+	logTime("post-tui.New")
 	tuiModel.SetInitialIngest(tui.MakeIngestCmd(db, ingestRoot, ingestFilter))
 	prog := tea.NewProgram(tuiModel, tea.WithAltScreen())
+	logTime("pre-prog.Run")
 	finalModel, err := prog.Run()
 	if err != nil {
 		fatal(err)

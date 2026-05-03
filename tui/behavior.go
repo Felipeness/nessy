@@ -4,20 +4,31 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/felipeness/nessy/internal/model"
 	"github.com/felipeness/nessy/internal/pricing"
 	"github.com/felipeness/nessy/internal/stats"
 )
 
+// behaviorView guarda input pro lazy compute. As stats pesadas (n-grams,
+// co-occurrence, flow distribution) custavam ~50s no startup com 60+ sessions,
+// quase 100% do cold start — agora rodam async via behaviorComputeCmd quando
+// usuario entra na tab pela primeira vez.
 type behaviorView struct {
-	bigrams   []stats.Bigram
-	trigrams  []stats.Trigram
-	coOccur   []stats.CoOccur
-	flow      stats.FlowSummary
-	style     stats.StyleStats
-	highErr   []stats.ErrorSession
-	timeCost  []stats.TimeCostPoint
+	sessions []*model.Session
+	pricing  *pricing.Pricing
+
+	bigrams  []stats.Bigram
+	trigrams []stats.Trigram
+	coOccur  []stats.CoOccur
+	flow     stats.FlowSummary
+	style    stats.StyleStats
+	highErr  []stats.ErrorSession
+	timeCost []stats.TimeCostPoint
+
+	loading  bool
+	computed bool
 
 	// scroll offset em linhas — ↑↓ ajustam pra rolar o body inteiro,
 	// que tem ~80 linhas e nao cabe num terminal padrao.
@@ -28,20 +39,51 @@ type behaviorView struct {
 func (v *behaviorView) Scroll(delta int) { v.scroll += delta }
 
 func newBehaviorView(sessions []*model.Session, p *pricing.Pricing) behaviorView {
-	return behaviorView{
-		bigrams:  stats.TopBigrams(sessions, 15),
-		trigrams: stats.TopTrigrams(sessions, 8),
-		coOccur:  stats.CoOccurrences(sessions, 3, 20),
-		flow:     stats.FlowDistribution(sessions),
-		style:    stats.StyleComparison(sessions),
-		highErr:  stats.HighErrorSessions(sessions, 0.15),
-		timeCost: stats.TimeCostPoints(sessions, p),
+	return behaviorView{sessions: sessions, pricing: p}
+}
+
+// behaviorComputedMsg carrega o resultado do compute async pra o Update aplicar.
+type behaviorComputedMsg struct {
+	bigrams  []stats.Bigram
+	trigrams []stats.Trigram
+	coOccur  []stats.CoOccur
+	flow     stats.FlowSummary
+	style    stats.StyleStats
+	highErr  []stats.ErrorSession
+	timeCost []stats.TimeCostPoint
+}
+
+// behaviorComputeCmd dispara as stats pesadas em goroutine. Devolve um msg
+// pra Update aplicar; nunca bloqueia o render loop.
+func behaviorComputeCmd(sessions []*model.Session, p *pricing.Pricing) tea.Cmd {
+	return func() tea.Msg {
+		return behaviorComputedMsg{
+			bigrams:  stats.TopBigrams(sessions, 15),
+			trigrams: stats.TopTrigrams(sessions, 8),
+			coOccur:  stats.CoOccurrences(sessions, 3, 20),
+			flow:     stats.FlowDistribution(sessions),
+			style:    stats.StyleComparison(sessions),
+			highErr:  stats.HighErrorSessions(sessions, 0.15),
+			timeCost: stats.TimeCostPoints(sessions, p),
+		}
 	}
 }
 
 func (v behaviorView) View(width, height int) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	muted := lipgloss.NewStyle().Foreground(colorMuted)
 	var b strings.Builder
+
+	if !v.computed {
+		fmt.Fprintln(&b, header.Render("🔬 Behavior"))
+		if v.loading {
+			fmt.Fprintln(&b, muted.Render("computando n-grams, co-occurrence, flow distribution…"))
+			fmt.Fprintln(&b, muted.Render("(primeira vez nessa tab — pode levar até ~1min com muitas sessions)"))
+		} else {
+			fmt.Fprintln(&b, muted.Render("aperte qualquer tecla pra começar a computar."))
+		}
+		return lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
+	}
 
 	// Bigrams + Trigrams lado a lado (texto)
 	fmt.Fprintln(&b, header.Render("🔗 Bigrams (top 15)"))

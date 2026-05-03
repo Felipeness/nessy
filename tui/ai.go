@@ -37,6 +37,12 @@ type aiView struct {
 	genStatus string
 
 	scroll int
+
+	// reachable é o cache do ultimo Health check. Atualizado via aiHealthMsg
+	// (tick em background), nunca dentro de View() — uma chamada Health por
+	// render causa freeze de 2s/keystroke quando Ollama nao responde.
+	reachable     bool
+	lastHealthAt  time.Time
 }
 
 func (v *aiView) Scroll(delta int) { v.scroll += delta }
@@ -46,6 +52,45 @@ func (v *aiView) Scroll(delta int) { v.scroll += delta }
 type aiGeneratedMsg struct {
 	kind string // "insights" | "profile" | "knowledge" | "knowledge_all" | "clusters"
 	err  error
+}
+
+// aiHealthMsg propaga resultado do Ollama health check (background tick).
+// Sem isso, View() chamaria Health() sincrono e cada keystroke ficava 2s
+// travado quando Ollama estava offline.
+type aiHealthMsg struct {
+	reachable bool
+	at        time.Time
+}
+
+// aiHealthCmd faz Health do Ollama em background e devolve aiHealthMsg.
+// Roda em goroutine via tea.Cmd; nunca bloqueia o render loop.
+func aiHealthCmd(client *ai.Client) tea.Cmd {
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return aiHealthMsg{
+			reachable: client.Health(ctx),
+			at:        time.Now(),
+		}
+	}
+}
+
+// aiHealthTickCmd dispara aiHealthCmd a cada `every` segundos.
+func aiHealthTickCmd(client *ai.Client, every time.Duration) tea.Cmd {
+	return tea.Tick(every, func(time.Time) tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if client == nil {
+			return aiHealthMsg{reachable: false, at: time.Now()}
+		}
+		return aiHealthMsg{
+			reachable: client.Health(ctx),
+			at:        time.Now(),
+		}
+	})
 }
 
 func newAIView(enabled bool, client *ai.Client, worker *ai.Worker, genModel, embedModel string, db *index.DB, sessions []*model.Session) aiView {
@@ -90,10 +135,8 @@ func (v aiView) View(width, height int, selected *model.Session) string {
 		return lipgloss.NewStyle().Width(width).Padding(1, 2).Render(b.String())
 	}
 
-	reachable := false
-	if v.client != nil {
-		reachable = v.client.Health(context.Background())
-	}
+	// Health vem do cache (tickado em background) — nunca chama HTTP do View.
+	reachable := v.reachable
 	cached := 0
 	for _, c := range v.caches {
 		if c.Summary != "" {
