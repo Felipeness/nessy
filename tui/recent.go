@@ -68,33 +68,37 @@ func (v recentView) View(width, height int) string {
 		return lipgloss.NewStyle().Width(width).Render("(nenhuma session encontrada)")
 	}
 	if v.groupByProject {
-		return v.viewByProject(width)
+		return v.viewByProject(width, height)
 	}
-	return v.viewByTime(width)
+	return v.viewByTime(width, height)
 }
 
-func (v recentView) viewByTime(width int) string {
+func (v recentView) viewByTime(width, height int) string {
 	now := time.Now()
-	var b strings.Builder
+	var lines []string
+	cursorLine := 0
 	var lastBucket string
 	for i, s := range v.sessions {
 		bucket := timeBucket(now, s.EndTime)
 		if bucket != lastBucket {
-			fmt.Fprintf(&b, "─── %s ─────────────\n", bucket)
+			lines = append(lines, fmt.Sprintf("─── %s ─────────────", bucket))
 			lastBucket = bucket
 		}
-		writeRecentEntry(&b, s, v, now, width, i == v.cursor)
+		if i == v.cursor {
+			cursorLine = len(lines)
+		}
+		lines = append(lines, recentEntryLines(s, v, now, width, i == v.cursor)...)
 	}
-	return b.String()
+	return scrollWindow(lines, cursorLine, height)
 }
 
-// writeRecentEntry renderiza uma session em 2 linhas:
+// recentEntryLines renderiza uma session em 2 linhas:
 //   ▶ 🟢 Implementing statusline studio with drag-drop
 //        16:34 · 41m · Opus · 1.2M · $4.32 · ~/Desktop/projects/claude-history
 //
 // Linha 1: title (AI summary > FirstUserMsg) — destaque cromado quando
 // for o cursor. Linha 2: metadata em muted.
-func writeRecentEntry(b *strings.Builder, s *model.Session, v recentView, now time.Time, width int, selected bool) {
+func recentEntryLines(s *model.Session, v recentView, now time.Time, width int, selected bool) []string {
 	icon := activityIcon(now.Sub(s.EndTime))
 	marker := "  "
 	if selected {
@@ -109,9 +113,7 @@ func writeRecentEntry(b *strings.Builder, s *model.Session, v recentView, now ti
 	if selected {
 		titleStyled = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(title)
 	}
-	fmt.Fprintf(b, "%s%s %s\n", marker, icon, titleStyled)
 
-	// Linha 2: meta em muted
 	dur := fmtDuration(s.Duration())
 	badge := ModelBadge(s.Model)
 	tokens := fmtTokens(s.TotalTokens())
@@ -131,10 +133,14 @@ func writeRecentEntry(b *strings.Builder, s *model.Session, v recentView, now ti
 		dur, badge, tokens, cost, dir, branch,
 	)
 	muted := lipgloss.NewStyle().Foreground(colorMuted).Render(meta)
-	fmt.Fprintf(b, "     %s\n", muted)
+
+	return []string{
+		fmt.Sprintf("%s%s %s", marker, icon, titleStyled),
+		fmt.Sprintf("     %s", muted),
+	}
 }
 
-func (v recentView) viewByProject(width int) string {
+func (v recentView) viewByProject(width, height int) string {
 	groups := map[string][]*model.Session{}
 	for _, s := range v.sessions {
 		groups[s.ProjectDir] = append(groups[s.ProjectDir], s)
@@ -150,16 +156,26 @@ func (v recentView) viewByProject(width int) string {
 	sort.Slice(flat, func(i, j int) bool {
 		return flat[i].list[0].EndTime.After(flat[j].list[0].EndTime)
 	})
-	now := time.Now()
-	var b strings.Builder
-	for _, e := range flat {
-		fmt.Fprintf(&b, "%s (%d sessions)\n", e.dir, len(e.list))
-		for _, s := range e.list {
-			fmt.Fprintf(&b, "  %s\n", formatDenseRow(s, v.pricing, now, width-4))
-		}
-		b.WriteString("\n")
+	// Mapeia cursor (índice em v.sessions) -> linha visível pra manter selecionado
+	// no viewport quando user navega pelo modo agrupado.
+	cursorSessionID := ""
+	if v.cursor >= 0 && v.cursor < len(v.sessions) {
+		cursorSessionID = v.sessions[v.cursor].SessionID
 	}
-	return b.String()
+	now := time.Now()
+	var lines []string
+	cursorLine := 0
+	for _, e := range flat {
+		lines = append(lines, fmt.Sprintf("%s (%d sessions)", e.dir, len(e.list)))
+		for _, s := range e.list {
+			if s.SessionID == cursorSessionID {
+				cursorLine = len(lines)
+			}
+			lines = append(lines, fmt.Sprintf("  %s", formatDenseRow(s, v.pricing, now, width-4)))
+		}
+		lines = append(lines, "")
+	}
+	return scrollWindow(lines, cursorLine, height)
 }
 
 func activityIcon(since time.Duration) string {

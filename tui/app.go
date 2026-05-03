@@ -74,6 +74,27 @@ type Model struct {
 	// `claude --resume` depois de prog.Run() retornar. Evita race com
 	// tea.Quit terminando o subprocess antes dele herdar o TTY.
 	pendingResume *model.Session
+
+	// initialIngest é um tea.Cmd que roda o reindex em background no startup.
+	// Setado por New(); nil pula o reindex (tests).
+	initialIngest tea.Cmd
+}
+
+// SetInitialIngest configura o reindex async disparado no Init. main.go injeta
+// uma closure que chama db.ReindexFiltered com os filters do user.
+func (m *Model) SetInitialIngest(cmd tea.Cmd) {
+	m.initialIngest = cmd
+	m.refreshing = true
+	m.status = "indexando sessions…"
+}
+
+// MakeIngestCmd cria um tea.Cmd que reindexa e devolve refreshDoneMsg —
+// usado por main.go pra injetar o ingest inicial sem expor refreshDoneMsg.
+func MakeIngestCmd(db *index.DB, root string, filter index.IngestFilter) tea.Cmd {
+	return func() tea.Msg {
+		stats, err := db.ReindexFiltered(root, filter)
+		return refreshDoneMsg{stats: stats, err: err}
+	}
 }
 
 // PendingResume devolve a session que o user quis retomar (nil se nenhuma).
@@ -172,8 +193,16 @@ func loadSummaries(db *index.DB) map[string]string {
 	return out
 }
 
-// Init satisfies tea.Model.
-func (m Model) Init() tea.Cmd { return m.spin.Tick }
+// Init satisfies tea.Model. Dispara o reindex inicial em background — TUI
+// abre instantâneo com o que já está cached no SQLite, sessions novas/atualizadas
+// aparecem quando o reindex termina (refreshDoneMsg → m.reload()).
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.spin.Tick}
+	if m.initialIngest != nil {
+		cmds = append(cmds, m.initialIngest)
+	}
+	return tea.Batch(cmds...)
+}
 
 func (m *Model) reload() {
 	sessions, _ := m.db.ListSessions()
@@ -585,23 +614,25 @@ func (m Model) renderBody() string {
 func (m Model) renderWide(h int) string {
 	leftW := m.width * 4 / 10
 	rightW := m.width - leftW
+	// inner width do pane direito (descontando padding 0,1 = 2 cols)
+	rightInner := rightW - 2
 	left := lipgloss.NewStyle().Width(leftW).Height(h)
 	right := lipgloss.NewStyle().Width(rightW).Height(h).Padding(0, 1)
 	switch m.activeTab {
 	case tabSearch:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.search.View(leftW, h)),
-			right.Render(m.detailCtx.renderDetail(m.search.selected())),
+			right.Render(m.detailCtx.renderDetail(m.search.selected(), rightInner)),
 		)
 	case tabRecent:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.recent.View(leftW, h)),
-			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
+			right.Render(m.detailCtx.renderDetail(m.recent.selected(), rightInner)),
 		)
 	case tabStats:
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.stats.renderGlobal(leftW)),
-			right.Render(m.detailCtx.renderDetail(m.recent.selected())),
+			right.Render(m.detailCtx.renderDetail(m.recent.selected(), rightInner)),
 		)
 	case tabCosts:
 		// full-width — costs/timeline/behavior/ai não tem detail panel
@@ -620,9 +651,14 @@ func (m Model) renderWide(h int) string {
 	case tabNess:
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.ness.View(m.width, h))
 	case tabThreads:
+		// Miller/Graph/Galaxy têm colunas/grid próprios e ficam ilegíveis
+		// no pane de 40% — full-width sem detail panel pra essas views.
+		if m.threads.IsFullWidth() {
+			return lipgloss.NewStyle().Width(m.width).MaxHeight(h).Render(m.threads.View(m.width, h))
+		}
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			left.Render(m.threads.View(leftW, h)),
-			right.Render(m.detailCtx.renderDetail(m.threads.selected())),
+			right.Render(m.detailCtx.renderDetail(m.threads.selected(), rightInner)),
 		)
 	}
 	return ""
@@ -637,7 +673,7 @@ func (m Model) renderNarrow(h int) string {
 		return m.recent.View(m.width, h)
 	case tabStats:
 		if m.stats.showLocal {
-			return clamp.Render(m.detailCtx.renderDetail(m.recent.selected()))
+			return clamp.Render(m.detailCtx.renderDetail(m.recent.selected(), m.width))
 		}
 		return clamp.Render(m.stats.renderGlobal(m.width))
 	case tabCosts:

@@ -400,16 +400,14 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 	cfg, _ := config.LoadConfig(configPath)
 	state := config.LoadState(statePath)
 
-	if _, err := db.ReindexFiltered(
-		filepath.Join(home, ".claude", "projects"),
-		index.IngestFilter{
-			SkipWarmup:      cfg.Ingest.SkipWarmup,
-			SkipClearOnly:   cfg.Ingest.SkipClearOnly,
-			MinMessages:     cfg.Ingest.MinMessages,
-			ExcludeProjects: cfg.Ingest.ExcludeProjects,
-		},
-	); err != nil {
-		fmt.Fprintln(os.Stderr, "reindex error:", err)
+	// Reindex roda async no Init() do TUI — startup mostra cache imediatamente
+	// e refresca quando termina. Cold-start vai de ~20s pra <1s pra primeiro paint.
+	ingestRoot := filepath.Join(home, ".claude", "projects")
+	ingestFilter := index.IngestFilter{
+		SkipWarmup:      cfg.Ingest.SkipWarmup,
+		SkipClearOnly:   cfg.Ingest.SkipClearOnly,
+		MinMessages:     cfg.Ingest.MinMessages,
+		ExcludeProjects: cfg.Ingest.ExcludeProjects,
 	}
 
 	p, err := pricing.Load(pricingPath)
@@ -445,7 +443,9 @@ func cmdTuiInternal(noAI bool, aiModelOverride string) {
 		}
 	}
 
-	prog := tea.NewProgram(tui.New(db, p, cfg, state, statePath, aiDeps), tea.WithAltScreen())
+	tuiModel := tui.New(db, p, cfg, state, statePath, aiDeps)
+	tuiModel.SetInitialIngest(tui.MakeIngestCmd(db, ingestRoot, ingestFilter))
+	prog := tea.NewProgram(tuiModel, tea.WithAltScreen())
 	finalModel, err := prog.Run()
 	if err != nil {
 		fatal(err)

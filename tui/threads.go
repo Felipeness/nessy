@@ -431,24 +431,72 @@ func sign(x int) int {
 	return 0
 }
 
+// IsFullWidth indica que a view atual tem layout interno (colunas/grid) que
+// fica ilegível quando espremido num pane de 40%. App.go usa isso pra render
+// sem split de detail panel.
+func (v threadsView) IsFullWidth() bool {
+	switch v.view {
+	case threadViewMiller, threadViewGraph, threadViewGalaxy:
+		return true
+	}
+	return false
+}
+
 func (v threadsView) View(width, height int) string {
 	header := v.renderStatusHeader(width)
+	// header tem 3 linhas (viewStrip + line2 + border)
+	bodyHeight := height - 3
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
 	var body string
 	switch v.view {
 	case threadViewTree:
 		body = v.renderTree(width)
+		body = scrollAroundCursor(body, bodyHeight)
 	case threadViewCards:
 		body = v.renderCards(width)
+		body = scrollAroundCursor(body, bodyHeight)
 	case threadViewMiller:
 		body = v.renderMiller(width)
 	case threadViewGraph:
 		body = v.renderGraph(width)
 	case threadViewTimeline:
 		body = v.renderTimeline(width)
+		body = scrollAroundCursor(body, bodyHeight)
 	case threadViewGalaxy:
-		body = v.renderGalaxy(width, height-3)
+		body = v.renderGalaxy(width, bodyHeight)
 	}
 	return header + "\n" + body
+}
+
+// scrollAroundCursor procura a linha selecionada (background ANSI 237 dos
+// estilos de seleção) e devolve uma janela de `height` ao redor dela.
+// Sem isso, listas longas (tree/cards/timeline) deixam o cursor invisível
+// quando passa do primeiro frame.
+func scrollAroundCursor(body string, height int) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) <= height || height <= 0 {
+		return body
+	}
+	cursorLine := 0
+	// Escaneia procurando seq ANSI da seleção (background 237) ou marker "▶".
+	// Primeiro com background é o cursor; senão pega primeiro "▶ " que apareça.
+	for i, line := range lines {
+		if strings.Contains(line, "\x1b[48;5;237m") || strings.Contains(line, "\x1b[48;5;235m") {
+			cursorLine = i
+			break
+		}
+	}
+	if cursorLine == 0 {
+		for i, line := range lines {
+			if strings.Contains(line, "▶ ") {
+				cursorLine = i
+				break
+			}
+		}
+	}
+	return scrollWindow(lines, cursorLine, height)
 }
 
 // renderStatusHeader é uma barra que aparece em TODAS as views mostrando:

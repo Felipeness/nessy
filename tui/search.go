@@ -435,25 +435,35 @@ func (v searchView) View(width, height int) string {
 			" · " + strconv.Itoa(len(v.results)) + " results · [ctrl+t] expand · [ctrl+f] fuzzy · [↑↓] nav · [enter] retomar",
 	)
 	now := time.Now()
-	var rows []string
+	// Quebra cada hit em linhas individuais (1 ou 2 dependendo de snippet)
+	// pra rastrear cursorLine e aplicar scrollWindow — sem isso, results > altura
+	// fazem o cursor sair da viewport.
+	var lines []string
+	cursorLine := 0
 	for i, h := range v.results {
 		marker := "  "
 		if i == v.cursor {
 			marker = "▶ "
+			cursorLine = len(lines)
 		}
 		row := formatDenseRow(h.Session, v.pricing, now, width-3)
+		lines = append(lines, marker+row)
 		if h.Snippet != "" {
 			snippet := h.Snippet
 			if len(snippet) > width-7 {
 				snippet = snippet[:width-8] + "…"
 			}
-			row += "\n     " + lipgloss.NewStyle().Foreground(colorMuted).Render(
+			lines = append(lines, "     "+lipgloss.NewStyle().Foreground(colorMuted).Render(
 				"["+h.Role+"] "+highlightBrackets(snippet),
-			)
+			))
 		}
-		rows = append(rows, marker+row)
 	}
-	body := strings.Join(rows, "\n")
+	// Reserva 2 linhas pra input (linha 1) + header (linha 2). Resto vai pra results.
+	bodyHeight := height - 2
+	if bodyHeight < 3 {
+		bodyHeight = 3
+	}
+	body := scrollWindow(lines, cursorLine, bodyHeight)
 	return lipgloss.JoinVertical(lipgloss.Left, v.input.View(), header, body)
 }
 

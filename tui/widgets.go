@@ -105,3 +105,23 @@ func truncRight(s string, n int) string {
 	}
 	return s[:n-1] + "…"
 }
+
+// scrollWindow devolve uma janela de `lines` com altura `height` que mantém
+// `cursorLine` visível. Quando o cursor passa do meio da janela, faz scroll
+// pra cima; quando chega no fim, clampa no último frame.
+//
+// Sem essa função, listas longas (recent/search/threads tree) ficam com o
+// cursor invisível ao passar do número de linhas que cabem na tela.
+func scrollWindow(lines []string, cursorLine, height int) string {
+	if height <= 0 || len(lines) <= height {
+		return strings.Join(lines, "\n")
+	}
+	start := cursorLine - height/2
+	if start < 0 {
+		start = 0
+	}
+	if start+height > len(lines) {
+		start = len(lines) - height
+	}
+	return strings.Join(lines[start:start+height], "\n")
+}

@@ -84,6 +84,38 @@ func (db *DB) ReindexFiltered(root string, filter IngestFilter) (ReindexStats, e
 		)
 	}
 
+	// Preload (path → session_id, mtime) num map único pra evitar N queries
+	// SQLite no hot path do walk. Em repos com milhares de JSONLs, esse
+	// preload sozinho corta segundos do startup.
+	type cached struct {
+		sid   string
+		mtime int64
+	}
+	cache := map[string]cached{}
+	if rows, err := db.conn.Query(`SELECT jsonl_path, session_id, jsonl_mtime FROM sessions`); err == nil {
+		for rows.Next() {
+			var p, sid string
+			var mtime int64
+			if rows.Scan(&p, &sid, &mtime) == nil {
+				cache[p] = cached{sid, mtime}
+			}
+		}
+		rows.Close()
+	}
+
+	// FTS counts por session — também preloaded pra evitar query por arquivo.
+	ftsCounts := map[string]int{}
+	if rows, err := db.conn.Query(`SELECT session_id, COUNT(*) FROM messages_fts GROUP BY session_id`); err == nil {
+		for rows.Next() {
+			var sid string
+			var n int
+			if rows.Scan(&sid, &n) == nil {
+				ftsCounts[sid] = n
+			}
+		}
+		rows.Close()
+	}
+
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -103,17 +135,9 @@ func (db *DB) ReindexFiltered(root string, filter IngestFilter) (ReindexStats, e
 		}
 		mtime := info.ModTime().UnixNano()
 
-		var cachedMtime int64
-		var cachedSID string
-		row := db.conn.QueryRow(`SELECT session_id, jsonl_mtime FROM sessions WHERE jsonl_path = ?`, path)
-		scanErr := row.Scan(&cachedSID, &cachedMtime)
-		if scanErr == nil && cachedMtime == mtime && !parserVersionChanged {
-			// Cache de metadata bate, mas o FTS pode estar subpopulado por
-			// versão antiga do parser. Verifica e força reindex de msgs se
-			// necessário (sem regravar metadata da session).
-			var ftsCount int
-			_ = db.conn.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE session_id = ?`, cachedSID).Scan(&ftsCount)
-			if ftsCount > 0 {
+		c, hit := cache[path]
+		if hit && c.mtime == mtime && !parserVersionChanged {
+			if ftsCounts[c.sid] > 0 {
 				return nil // up-to-date completo
 			}
 			// Re-indexa só as messages, mantém metadata
@@ -122,7 +146,7 @@ func (db *DB) ReindexFiltered(root string, filter IngestFilter) (ReindexStats, e
 			}
 			return nil
 		}
-		if scanErr == nil {
+		if hit {
 			stats.Updated++
 		} else {
 			stats.New++

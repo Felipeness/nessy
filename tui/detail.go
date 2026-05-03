@@ -23,11 +23,22 @@ func newDetailContext(all []*model.Session, p *pricing.Pricing) *detailContext {
 	return &detailContext{allSessions: all, pricing: p, msgsCache: map[string][]parser.Message{}}
 }
 
-func (d *detailContext) renderDetail(s *model.Session) string {
+// renderDetail aceita paneWidth pra dimensionar bar charts/sparklines ao
+// pane real do detail. Antes era hardcoded 50, deixando metade do pane vazio
+// em terminais largos.
+func (d *detailContext) renderDetail(s *model.Session, paneWidth int) string {
 	if s == nil {
 		return "(nenhuma session selecionada)"
 	}
-	width := 50
+	// bars precisam caber em "label(13) + ' ' + bar + ' $X.XX (XX%)'(~13)".
+	// Reserva 30 pra label + suffix; resto é bar. Clampa pra 20-80.
+	barWidth := paneWidth - 30
+	if barWidth < 20 {
+		barWidth = 20
+	}
+	if barWidth > 80 {
+		barWidth = 80
+	}
 
 	var b strings.Builder
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
@@ -51,10 +62,10 @@ func (d *detailContext) renderDetail(s *model.Session) string {
 				brl = fmt.Sprintf(" (R$ %.2f)", c.BRL)
 			}
 			fmt.Fprintf(&b, "Total: $%.2f USD%s\n", c.USD, brl)
-			renderCostBar(&b, "Input        ", c.InputUSD, c.USD, width-18)
-			renderCostBar(&b, "Output       ", c.OutputUSD, c.USD, width-18)
-			renderCostBar(&b, "Cache create ", c.CacheCreationUSD, c.USD, width-18)
-			renderCostBar(&b, "Cache read   ", c.CacheReadUSD, c.USD, width-18)
+			renderCostBar(&b, "Input        ", c.InputUSD, c.USD, barWidth)
+			renderCostBar(&b, "Output       ", c.OutputUSD, c.USD, barWidth)
+			renderCostBar(&b, "Cache create ", c.CacheCreationUSD, c.USD, barWidth)
+			renderCostBar(&b, "Cache read   ", c.CacheReadUSD, c.USD, barWidth)
 			b.WriteByte('\n')
 		} else {
 			fmt.Fprintf(&b, "Custo: ? (modelo %q sem entry no pricing.toml)\n\n", s.Model)
