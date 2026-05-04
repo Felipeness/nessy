@@ -123,6 +123,10 @@ func main() {
 		cmdMCPServe()
 	case "mcp-install":
 		cmdMCPInstall(os.Args[2:])
+	case "install":
+		cmdInstall(os.Args[2:])
+	case "uninstall":
+		cmdUninstall(os.Args[2:])
 	case "daemon-install":
 		cmdDaemonInstall()
 	case "daemon-uninstall":
