@@ -1,0 +1,17 @@
+# Claude Code
+
+## Nessy — Spec generation skill
+
+Este projeto tem o skill **nessy** instalado. Pra reverse-engineer o codebase
+e gerar specs operacionais em `_nessy_sdd/`:
+
+```
+/nessy
+```
+
+(ou apenas `nessy` em engines sem slash command)
+
+O skill coordena 4 sub-skills (archaeologist → detective → architect → writer)
+e marca toda afirmacao com confidence (🟢 confirmado / 🟡 inferido / 🔴 gap).
+
+Skills instalados em `.claude/skills/`. Saiba mais: https://github.com/Felipeness/nessy

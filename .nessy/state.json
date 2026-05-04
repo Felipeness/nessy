@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "started_at": "2026-05-04T00:00:00Z",
+  "completed_at": "2026-05-04T01:30:00Z",
+  "project_root": "C:\\Users\\felip\\nessy",
+  "phase": "scribing",
+  "completed_phases": ["reconnaissance", "mapping", "decoding", "blueprint", "scribing"],
+  "next_action": "DONE — see _nessy_atlas/confidence-report.md for summary",
+  "status": "complete"
+}
